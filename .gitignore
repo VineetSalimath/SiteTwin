@@ -1,0 +1,81 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.*
+secrets.*
+
+# C / C++ compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.elf
+*.hex
+*.bin
+*.map
+*.d
+*.dep
+
+# Build directories
+build/
+Build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Zephyr / west
+.venv/
+venv/
+zephyr/build/
+twister-out*/
+modules/
+tools/
+bootloader/
+*.config.old
+
+# ESP-IDF
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Python support scripts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# JavaScript, if the project has a dashboard
+node_modules/
+dist/
+.next/
+
+# IDE files
+.vscode/
+.idea/
+*.code-workspace
+
+# Windows and operating system files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+~$*
