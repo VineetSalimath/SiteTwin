@@ -1,7 +1,8 @@
 ---
 title: Architecture Baseline
 project: SiteTwin
-status: Firmware baseline implemented
+status: Firmware baseline implemented; hardware bring-up starting
+updated: 2026-07-29
 tags:
   - sitetwin
   - architecture
@@ -11,11 +12,11 @@ tags:
 
 # Architecture Baseline
 
-Related: [[SiteTwin Project Hub]], [[SiteTwin Data Flow - Beginner Guide]], [[Gateway and Data Flow]], [[Firmware Architecture]]
+Related: [[SiteTwin Project Hub]], [[SiteTwin Data Flow - Beginner Guide]], [[Gateway and Data Flow]], [[Firmware Architecture]], [[Hardware Bring-Up and Open Decisions]]
 
 ## Executive Summary
 
-SiteTwin has converged on a modular sensing architecture with three ESP32-C6 Zigbee pods, a powered gateway, and a Raspberry Pi. Battery pods perform sensor-facing work and only enough processing to reduce sensor power or Zigbee traffic. The gateway handles protocol and delivery processing, while the Raspberry Pi handles persistence, dashboards, soak-test observability, and state interpretation. The shared portable firmware policy is implemented and passing host tests; hardware integration remains outstanding.
+SiteTwin has converged on a modular sensing architecture with three ESP32-C6 Zigbee pods, a powered gateway, and a Raspberry Pi. Battery pods perform sensor-facing work and only enough processing to reduce sensor power or Zigbee traffic. The gateway handles protocol and delivery processing, while the Raspberry Pi handles persistence, dashboards, soak-test observability, and state interpretation. The shared portable firmware policy is implemented and passing host tests. ESP32-C6-DevKitC-1 hardware and the project sensor hardware have now been acquired, so board bring-up and hardware integration can begin.
 
 ## Pod Topology
 
@@ -47,3 +48,15 @@ This architecture gives the dissertation a clearer technical argument:
 Pods should not emit JSON over Zigbee. They should send typed embedded telemetry through Zigbee attributes or compact records. JSON should begin once data reaches the gateway or Raspberry Pi.
 
 Routine telemetry is change-driven rather than sample-driven. Pods suppress values inside a configured deadband, enforce a minimum transmission interval, and send a maximum-silence heartbeat. Events and quality-state changes bypass suppression. This means forward sequence gaps can be intentional and must not be treated as packet loss without additional evidence.
+
+## Hardware Integration Status
+
+Confirmed after the latest supervisor/team meeting:
+
+- the pod development board in hand is the Espressif ESP32-C6-DevKitC-1
+- the universal module concept remains a six-contact physical connector carrying supply, ground, shared I2C SDA/SCL, and two auxiliary signal positions
+- analogue resistor-coded module identification is being evaluated for one auxiliary line because non-I2C modules do not have protocol-level identity
+- reducing identification-divider standby current through switched/gated identification circuitry is a design objective
+- the exact mux topology, GPIO allocation, port-count expansion scheme, and immediate hot-swap wake circuitry are not yet locked and must remain marked as pending until the team confirms them
+
+Do not implement assumptions about ID-only versus ID+DATA multiplexing, a specific mux channel count, a four-versus-six-port final PCB, comparator wake circuitry, or exact resistor voltage bands until those choices are confirmed.
