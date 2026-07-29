@@ -4,8 +4,8 @@ aliases:
   - SiteTwin
   - SiteTwin Overview
 project: SiteTwin
-status: Firmware foundation implemented
-date: 2026-07-26
+status: Firmware foundation implemented; hardware acquired
+updated: 2026-07-29
 tags:
   - sitetwin
   - hub
@@ -15,7 +15,7 @@ tags:
 
 # SiteTwin Project Hub
 
-SiteTwin is a low-cost, modular digital twin sensing platform for indoor and workplace monitoring. The current baseline is a battery-first Zigbee sensing fabric built from three ESP32-C6 pods, a powered gateway, and a Raspberry Pi for storage, dashboards, soak testing, and ML-backed interpretation. A portable shared firmware foundation is now implemented and host-tested before hardware acquisition.
+SiteTwin is a low-cost, modular digital twin sensing platform for indoor and workplace monitoring. The current baseline is a battery-first Zigbee sensing fabric built from three ESP32-C6 pods, a powered gateway, and a Raspberry Pi for storage, dashboards, soak testing, and ML-backed interpretation. The portable shared firmware foundation is implemented and host-tested. Physical hardware has now been acquired, so the project is moving from hardware-independent validation into board bring-up and integration.
 
 ## What We Are Building
 
@@ -25,6 +25,7 @@ SiteTwin is a low-cost, modular digital twin sensing platform for indoor and wor
 - [[Firmware Architecture]]
 - [[Gateway and Data Flow]]
 - [[Validation and Implementation Plan]]
+- [[Hardware Bring-Up and Open Decisions]]
 - [[Source References]]
 
 ## Locked Storyline
@@ -44,6 +45,7 @@ The project is no longer "one smart node with every sensor attached." The strong
 5. Pods should publish typed telemetry records over Zigbee, while JSON should start at the gateway or Raspberry Pi boundary.
 6. Sampling and reporting are separate decisions: a pod may sample a sensor but suppress transmission when the value has not changed meaningfully.
 7. Sequence gaps are allowed and expected because suppressed readings still consume sensor sequence numbers.
+8. The acquired pod development board is the Espressif ESP32-C6-DevKitC-1.
 
 ## Current Firmware Progress
 
@@ -64,12 +66,13 @@ Implemented and passing host tests:
 
 For a step-by-step explanation of how these pieces call each other, see [[SiteTwin Data Flow - Beginner Guide]].
 
-Not yet implemented because it depends on hardware or final transport choices:
+Not yet implemented or hardware-validated:
 
-- real ESP-IDF I2C, GPIO, interrupt, Zigbee, and power-management adapters
-- FreeRTOS task composition and deep-sleep behavior on the selected boards
+- real ESP-IDF I2C, GPIO, interrupt, Zigbee, ADC, and power-management adapters
+- FreeRTOS task composition and deep-sleep behavior on the ESP32-C6-DevKitC-1
 - ESP Zigbee custom-cluster adapter, commissioning, MQTT batching, persistent outage buffer, and Raspberry Pi services
 - real sensor characterization and final deadband tuning
+- final universal-port ID multiplexing and immediate hot-swap detection circuitry; these remain team decisions and must not be treated as locked architecture
 
 ## Pod Map
 
@@ -80,9 +83,11 @@ Not yet implemented because it depends on hardware or final transport choices:
 
 ## Next Practical Work
 
+- verify the exact ESP32-C6-DevKitC-1 pin map and create a board-level GPIO assignment before wiring modules
+- install and pin the ESP-IDF and ESP Zigbee SDK versions used for hardware bring-up
+- bring up the SHT41 through a thin ESP-IDF I2C driver implementing the existing `probe` and `sample` interface
+- characterize ADC behavior, resistor-ID tolerances, sensor noise, warm-up time, current draw, and useful sampling cadence on real hardware
+- confirm the final universal-port ID multiplexing, power-gating, and hot-swap architecture with the team before implementing it
 - add gateway MQTT batching and simulated Wi-Fi outage recovery
 - design commissioning, allow-listing, and sensor-slot registration messages
-- create thin ESP Zigbee SDK adapter files once the SDK is installed and version-pinned
-- bring up the SHT41 board adapter when the first ESP32-C6 hardware arrives
-- measure real sensor noise and tune the reporting thresholds in [[Firmware Architecture]]
 - validate gateway reliability through the tests listed in [[Validation and Implementation Plan]]
