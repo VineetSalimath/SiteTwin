@@ -2,7 +2,7 @@
 title: Hardware Bring-Up and Open Decisions
 project: SiteTwin
 status: Active hardware integration
-updated: 2026-07-29
+updated: 2026-07-31
 tags:
   - sitetwin
   - hardware
@@ -24,6 +24,8 @@ This note is the handoff point for Codex and the project team as SiteTwin moves 
 - A resistor-coded analogue identification mechanism is being evaluated so non-I2C modules can be identified independently of their native data protocol.
 - Identification circuitry should be duty-cycled or otherwise gated so that a voltage-divider ID path does not impose unnecessary continuous battery drain.
 - The existing portable C sensor-driver abstraction, registry, reporting policy, telemetry queues, Zigbee codec, and gateway core remain valid and should be preserved while hardware-specific adapters are added.
+- Two ESP32-C6-DevKitC-1 boards have formed a SiteTwin Zigbee network and repeatedly delivered the real 30-byte SiteTwin payload from pod to gateway.
+- ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3 are the currently tested software baseline.
 
 ## Confirmed Firmware Direction
 
@@ -87,8 +89,8 @@ Use multiple ADC samples and robust classification bands only after bench data e
 
 ## Immediate Bring-Up Sequence
 
-1. Verify and document the actual GPIO assignment used on the ESP32-C6-DevKitC-1 prototype.
-2. Pin ESP-IDF and ESP Zigbee SDK versions.
+1. Complete: pin ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3, then prove pod-to-gateway SiteTwin telemetry on two ESP32-C6 boards.
+2. Verify and document the actual GPIO assignment used on the ESP32-C6-DevKitC-1 prototype.
 3. Prove a basic GPIO and I2C application on the development board.
 4. Implement the real SHT41 driver behind `st_sensor_driver_t`.
 5. Run the existing pod runtime with a real SHT41 while keeping the rest of the pipeline unchanged.

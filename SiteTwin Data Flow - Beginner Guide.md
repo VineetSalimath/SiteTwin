@@ -5,7 +5,7 @@ aliases:
   - How SiteTwin Data Moves
 project: SiteTwin
 status: Current implementation explained
-date: 2026-07-26
+date: 2026-07-31
 tags:
   - sitetwin
   - beginner
@@ -23,6 +23,10 @@ Related: [[SiteTwin Project Hub]], [[Architecture Baseline]], [[Firmware Archite
 A battery pod measures something, decides whether the measurement is worth transmitting, sends a
 small binary message over Zigbee, and the powered gateway checks it, gives it readable names, turns it
 into JSON, and later sends it over Wi-Fi to the Raspberry Pi.
+
+Current deployment note: the pod-to-Zigbee-gateway portion is now real. In the recommended two-ESP
+gateway, the Zigbee-side ESP keeps data binary and will forward it to the server/Wi-Fi ESP, where JSON
+and MQTT belong.
 
 ## The Three Main Parts
 
@@ -246,6 +250,11 @@ pass records through bounded queues.
   counted so it cannot fail silently.
 
 ## What Is Real Today?
+
+The two-board Zigbee transport is now deployed: a pod End Device joins a gateway Coordinator and sends
+the real fixed 30-byte SiteTwin payload through custom cluster `0xFC00`. The gateway validates and
+accepts the frame. The temporary health message is a software stand-in until physical sensor drivers
+are available.
 
 Implemented and host-tested today:
 

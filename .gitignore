@@ -53,6 +53,11 @@ bootloader/
 sdkconfig.old
 managed_components/
 dependencies.lock
+firmware/sdkconfig
+firmware/build_*/
+external/
+!firmware/tools/
+!firmware/tools/*.ps1
 
 # Python support scripts
 __pycache__/
@@ -83,3 +88,4 @@ gateway-wifi/main/wifi_config.h
 
 pi-bridge/config.py
 gateway-wifi/sdkconfig
+.codex_doc_review/

@@ -1,0 +1,8 @@
+menu "SiteTwin firmware"
+
+config SITETWIN_ZIGBEE_CHANNEL
+    int "Zigbee primary channel"
+    range 11 26
+    default 13
+
+endmenu
