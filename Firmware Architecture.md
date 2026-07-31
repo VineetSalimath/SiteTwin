@@ -1,7 +1,7 @@
 ---
 title: Firmware Architecture
 project: SiteTwin
-status: Host-tested firmware foundation
+status: Hardware Zigbee bring-up complete
 tags:
   - sitetwin
   - firmware
@@ -39,11 +39,23 @@ The current firmware contains:
 
 Current reading flow:
 
-`sensor driver -> sensor registry -> pod reporting policy -> priority queue -> 30-byte Zigbee codec -> ESP Zigbee adapter (future)`
+`sensor driver -> sensor registry -> pod reporting policy -> priority queue -> 30-byte Zigbee codec -> ESP Zigbee custom command -> gateway ingress`
 
 Current gateway flow:
 
-`ESP Zigbee callback (future) -> gateway registry -> payload decode -> validation/deduplication -> delivery queue -> JSON -> MQTT adapter (future)`
+`ESP Zigbee custom-command callback -> payload decode -> validation/deduplication -> delivery queue -> UART frame -> server/Wi-Fi ESP -> JSON -> MQTT adapter (future)`
+
+## Deployed Zigbee Bring-Up
+
+The ESP-IDF composition root now has a real ESP Zigbee SDK v2.0.3 adapter. The same source produces
+separate images in `build_pod` and `build_gateway`: the pod is a Zigbee End Device and the gateway is
+a Zigbee Coordinator. The pod sends the implemented fixed 30-byte SiteTwin payload through custom
+cluster `0xFC00`, command `0x01`; the gateway validates it with the existing portable runtime.
+
+This was deployed and observed on two ESP32-C6-DevKitC-1 boards. The pod restored its network and
+sent periodic SiteTwin health frames; the gateway logged `ingress result 0` for each frame. The
+temporary health record is a bring-up source only. Real sensor drivers will replace it without
+changing the queue, codec, or Zigbee transport.
 
 ## Common Task Model
 
@@ -135,8 +147,11 @@ The sensor registry increments a sequence number whenever a reading is produced.
 ## Remaining Firmware Work
 
 - real board drivers for I2C, GPIO, PIR or reed interrupts, and ADXL345 FIFO
-- ESP Zigbee custom-cluster registration, send/receive callbacks, commissioning, and security policy
-- FreeRTOS task creation, queue ownership, watchdogs, and stack sizing
+- sensor-to-runtime adapters that queue real readings in place of the development health record
+- gateway IEEE/pod/sensor-slot registry provisioning rather than the current bring-up labels
+- UART forwarding from the Zigbee gateway ESP to the server/Wi-Fi ESP
+- commissioning allow-listing, application acknowledgement, retry policy, and production security policy
+- watchdog and stack-margin measurement on the final workload
 - deep sleep and per-port sensor power switching
 - gateway MQTT batching and persistent retry storage
 - remote configuration of reporting rules

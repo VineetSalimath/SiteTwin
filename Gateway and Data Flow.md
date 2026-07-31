@@ -34,7 +34,7 @@ The gateway should perform:
 - Wi-Fi and MQTT retries with persistent buffering
 - derived metrics, anomaly preparation, and gateway health reporting
 
-Validation, node and sensor-slot resolution, duplicate or stale rejection, priority queueing, and JSON handoff are implemented in the portable firmware core. MQTT batching and persistent storage remain gateway-runtime work.
+Validation, duplicate or stale rejection, priority queueing, and JSON handoff are implemented in the portable firmware core. The deployed Zigbee-side gateway currently uses temporary `POD_<short-address>` and `SLOT_<slot>` labels during bring-up; persistent IEEE and sensor-slot provisioning remains to be connected. MQTT batching and persistent storage remain gateway-runtime work.
 
 ## Recommended Internal Envelope
 
@@ -85,9 +85,9 @@ Suggested topic families:
 
 ## JSON Boundary
 
-The gateway-to-Pi boundary is the right place to produce canonical JSON envelopes. That keeps the radio side compact and typed while making downstream storage and dashboards easier to evolve.
+The gateway-to-Pi boundary is the right place to produce canonical JSON envelopes. In the agreed dual-ESP design, the Zigbee-side ESP keeps records binary and forwards a framed UART message to the server/Wi-Fi ESP. That server ESP performs JSON conversion and Wi-Fi/MQTT delivery.
 
-The canonical JSON serializer is implemented and tested. Pods do not build JSON.
+The canonical JSON serializer is implemented and tested. Pods and the Zigbee-side gateway do not build JSON.
 
 ## Gateway Ingress Policy
 

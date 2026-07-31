@@ -1,7 +1,7 @@
 ---
 title: Validation and Implementation Plan
 project: SiteTwin
-status: Host validation in progress
+status: Host validation and Zigbee bring-up complete
 tags:
   - sitetwin
   - validation
@@ -48,6 +48,15 @@ The shared C firmware currently compiles with strict warnings and passes native 
 
 The latest deterministic stress run processed 384 telemetry records and ended with all tests passing. This validates logic and memory bounds on the host; it does not yet validate radio performance, timing under FreeRTOS, electrical behavior, or real battery consumption.
 
+## Completed Zigbee Bring-Up
+
+Two ESP32-C6-DevKitC-1 boards ran separate SiteTwin images: a Coordinator gateway and an End Device pod.
+They formed a Zigbee network on channel 13, the pod joined, and the pod repeatedly sent the actual
+30-byte SiteTwin payload through custom cluster `0xFC00`. The gateway decoded each packet through
+`st_gateway_runtime_ingest_zigbee` and reported `ingress result 0` (accepted). This validates the
+deployed binary pod-to-gateway path, but not real sensor acquisition, long-duration reliability,
+security hardening, or the UART/Wi-Fi server path.
+
 ## Reporting Policy Validation
 
 For each real sensor, record a stable baseline and controlled changes to determine:
@@ -77,9 +86,9 @@ The development thresholds in [[Firmware Architecture#Battery-Aware Reporting Po
 1. complete: lock the initial message contracts and quality flags
 2. complete: build and stress-test the shared firmware skeleton with fake sensors
 3. complete: define and host-test the compact Zigbee telemetry payload and gateway ingress pipeline
-4. implement gateway MQTT batching and a simulated persistent outage buffer
-5. define commissioning, allow-listing, configuration commands, and application acknowledgements
-6. install and pin ESP-IDF plus ESP Zigbee SDK, then add thin custom-cluster adapters
+4. complete: install and pin ESP-IDF v5.5.4 plus ESP Zigbee SDK v2.0.3, then deploy the thin custom-cluster adapter
+5. implement gateway UART forwarding, MQTT batching, and a simulated persistent outage buffer
+6. define commissioning allow-listing, configuration commands, application acknowledgements, and production security
 7. bring up the environment pod and SHT41 first
 8. bring up the activity and access pod
 9. bring up the equipment pod
