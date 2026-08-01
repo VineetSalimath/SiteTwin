@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "src/contracts.c"
+        "src/gateway_frame.c"
+        "src/gateway_json.c"
+        "src/gateway_processor.c"
+        "src/gateway_registry.c"
+        "src/gateway_runtime.c"
+        "src/zigbee_payload.c"
+        "src/pod_runtime.c"
+        "src/reporting_policy.c"
+        "src/sensor_registry.c"
+        "src/telemetry_queue.c"
+    INCLUDE_DIRS
+        "include"
+)

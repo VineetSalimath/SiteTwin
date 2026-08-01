@@ -79,3 +79,7 @@ Desktop.ini
 *.tmp
 *.temp
 ~$*
+gateway-wifi/main/wifi_config.h
+
+pi-bridge/config.py
+gateway-wifi/sdkconfig
