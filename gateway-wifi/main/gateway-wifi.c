@@ -12,6 +12,7 @@
 #include "gateway_pipeline.h"
 #include "console_commands.h"
 #include "mqtt_publish.h"
+#include "uart_link.h"
 #include "wifi_config.h"
 
 static const char *TAG = "gateway-wifi";
@@ -153,6 +154,14 @@ void app_main(void)
     mqtt_init();
 
     gateway_pipeline_init();
+
+    /* Starts the UART receive/parse framework. Payload interpretation is
+     * still a stub pending format confirmation with the Zigbee-side owner;
+     * see uart_link.c and GATEWAY_TO_SERVER_BRINGUP.md. This does not
+     * interfere with the test data source or the console, which use UART0;
+     * this uses UART1. */
+    uart_link_init();
+
     console_init();
 
     ESP_LOGI(TAG, "Ready. Type 'help' at the prompt for available commands.");

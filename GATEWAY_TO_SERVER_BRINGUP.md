@@ -21,25 +21,31 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
   forwards telemetry into ThingsBoard using the official `TBGatewayMqttClient` gateway
   API. Devices are auto-created in ThingsBoard per `pod_id` (no manual per-device
   provisioning needed).
-- End-to-end delivery has been verified: a locally-encoded test record travels from the
-  Wi-Fi ESP through HiveMQ and the bridge script into a ThingsBoard device entity,
-  visible in the UI, including all metadata fields (see "Known data loss" below —
-  resolved).
+- End-to-end delivery has been verified: locally-encoded test records (both routine
+  readings and heartbeat records) travel from the Wi-Fi ESP through HiveMQ and the
+  bridge script into ThingsBoard device entities, visible in the UI, with all metadata
+  fields intact (see "Known data loss" below — resolved).
 - `sitetwin_core` on this board is byte-identical to the version used in the
   `sitetwin-zigbee-bringup` branch (verified via `diff -rq`), so no shared-contract drift
   exists between the two boards' firmware as of this writing.
 - `bridge.py` runs as a systemd service (`sitetwin-bridge.service`): starts on boot,
   restarts automatically on failure, logs to both `journalctl` and a local file.
+- A UART frame receive/parse framework is implemented and self-test verified (see
+  "UART link" below). It correctly reassembles and CRC-validates a synthetic frame
+  end to end. Payload interpretation is not yet implemented — see "Open decisions."
 
 ## Confirmed but hardcoded for now
 
 - The Zigbee-side gateway currently synthesizes `pod_id` directly from the Zigbee short
   address (e.g. `POD_1234`) rather than through `gateway_registry` lookups. This board's
-  test data source now matches that convention (see "Pod/sensor naming scheme" below).
-- The 30-byte SiteTwin telemetry payload consumed by this board is currently
-  hand-constructed in firmware for testing (via `st_zigbee_telemetry_encode`) rather
-  than received over UART. This exercises the same downstream pipeline
-  (`gateway_runtime`, `gateway_json`) that a real UART-received payload would use.
+  test data source matches that convention (see "Pod/sensor naming scheme" below).
+- The 30-byte SiteTwin telemetry payload consumed by the test data source
+  (`gateway_pipeline.c`) is hand-constructed in firmware for testing (via
+  `st_zigbee_telemetry_encode`) rather than received over UART. This exercises the same
+  downstream pipeline (`gateway_runtime`, `gateway_json`) that a real UART-received
+  payload would use.
+- The UART link's physical parameters (baud rate 115200, TXD=GPIO4, RXD=GPIO5, UART1)
+  are placeholders, not confirmed with the Zigbee-side owner. See "UART link" below.
 - HiveMQ and ThingsBoard credentials are stored in `wifi_config.h` (Wi-Fi ESP, excluded
   from git) and `pi-bridge/config.py` (bridge script, excluded from git). Both are
   plaintext local files, not a secrets manager — acceptable for the current project
@@ -47,22 +53,24 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
 
 ## Known data loss in the current pipeline
 
-Tracing a single record end to end originally surfaced several places where information
-was dropped rather than carried forward. Status as of this writing:
-
 - **Resolved**: `bridge.py` previously forwarded only `pod_id`, `sensor_id`, and `value`
   into ThingsBoard, discarding `sequence`, `boot_id`, `uptime_ms`, and `quality_flags`.
   The bridge now forwards all of these, each prefixed with `sensor_id` (e.g.
   `SLOT_0_quality_flags`, `SLOT_0_sequence`) to avoid key collisions if a pod reports
-  multiple sensors. Verified end to end: all five telemetry keys appear correctly in
-  ThingsBoard's Latest Telemetry panel for a test device.
+  multiple sensors. Verified end to end.
 - **Still open**: `st_gateway_telemetry_to_json` (shared firmware code, not modified on
   this board) omits the `priority` field. Downstream consumers still cannot distinguish
-  routine state from event- or health-priority records. This requires a change to shared
-  code and should be raised with the team rather than patched locally.
+  routine state from event- or health-priority records. Requires a shared-code change;
+  should be raised with the team rather than patched locally.
 - **Still open**: the ThingsBoard telemetry timestamp is set to bridge processing time
   (wall-clock time when `bridge.py` handles the message), not a timestamp derived from
-  the pod's `uptime_ms`. No uptime-to-wall-clock mapping exists yet on either board.
+  the pod's `uptime_ms`. This is an accepted architectural gap, not an oversight: pods
+  are deliberately designed without knowledge of absolute time (to avoid the battery
+  cost of an RTC or periodic time sync), and `uptime_ms` is the free byproduct of a
+  timer pods already need for their own reporting-policy logic. Converting `uptime_ms`
+  to an absolute timestamp would require the Gateway/Server side to track each pod's
+  absolute boot time — a mechanism that does not exist yet anywhere in the pipeline (not
+  on the Zigbee-side gateway, not here). Not planned for the current milestone.
 
 ## Open decisions — do not hard-code further assumptions
 
@@ -72,18 +80,22 @@ was dropped rather than carried forward. Status as of this writing:
 reception and validation only, and that "the planned gateway-to-server ESP remains
 responsible for the later UART frame and JSON conversion." This places JSON conversion
 on this board, consistent with the current implementation. However, the exact contents
-of the UART frame payload are not yet finalized. The strongest available evidence
+of the UART frame *payload* are not yet finalized. The strongest available evidence
 (the `gateway_runtime_ingest_zigbee_source` function signature, which accepts a raw
 30-byte Zigbee payload plus a source address) suggests the UART payload will likely be
 the validated 30-byte SiteTwin payload plus its originating short address, but this has
-not been confirmed with the Zigbee-side owner and should not be hard-coded into a real
-UART receive path yet.
+not been confirmed with the Zigbee-side owner.
 
-**Decision for now**: defer real UART implementation until this is confirmed. Continue
-building out everything downstream of it (this board's own test data source, bridge
-hardening, ThingsBoard-side data handling) against synthetic data in the meantime, since
-all of that work is reusable once the real UART path lands — only the data-source layer
-will need to change.
+The outer frame format (start marker, header layout, CRC16) is **not** part of this open
+question — it comes from the shared, already-tested `gateway_frame.c` and both boards
+use it identically. Only the payload's internal contents are undecided.
+
+**Separately, and independently answerable without the Zigbee-side owner**, two small
+physical-layer parameters need a one-line confirmation before real hardware testing can
+begin: UART baud rate (this board defaults to 115200, pending agreement) and which GPIO
+pins carry TX/RX on each board (this board currently uses GPIO4/GPIO5, arbitrarily
+chosen, not yet coordinated with the physical wiring on the other board). Neither
+requires design discussion — just confirmation.
 
 ### Pod/sensor naming scheme — Resolved
 
@@ -96,41 +108,60 @@ into the identifier itself is misleading. If a human-readable label is needed la
 (e.g. for dashboard presentation), it should be added as a separate attribute, not
 baked into the identifier.
 
-This board's test data source (`gateway_pipeline.c`) has been updated to match:
-`TEST_POD_ID`/`TEST_SENSOR_ID` now default to `POD_1234`/`SLOT_0`. Verified end to end —
-ThingsBoard correctly auto-creates a `POD_1234` device with a `SLOT_0` telemetry key.
+This board's test data source (`gateway_pipeline.c`) matches: `TEST_POD_ID`/
+`TEST_SENSOR_ID` default to `POD_1234`/`SLOT_0`. Verified end to end — ThingsBoard
+correctly auto-creates a `POD_1234` device with a `SLOT_0` telemetry key.
 
-### Heartbeat / health record handling — Still open
+### Heartbeat / health record handling — Resolved
 
 Pod health frames (`record_class = HEALTH`, `sensor_kind = UNKNOWN`, `value = 1.0`) are
-already being sent by the Zigbee-side pod image every 15 seconds as a bring-up signal.
-These should not be silently dropped once real UART integration begins — they are a
-meaningful liveness signal — but forwarding them into ThingsBoard as an ordinary
-telemetry key named after an "unknown" sensor kind would be misleading. A dedicated
-representation (e.g. a `last_seen` or heartbeat-specific field) is planned but not yet
-designed or implemented. Full validation is blocked on real UART data; a synthetic
-health record could be used to validate the design in the meantime.
+sent by the Zigbee-side pod image every 15 seconds as a bring-up signal, and this
+board's test data source can synthesize the same shape via the `send_heartbeat` console
+command.
+
+`bridge.py` detects `record_class == "health"` and forwards it as
+`{sensor_id}_heartbeat: true` (plus `_sequence`, `_boot_id`, `_uptime_ms`) instead of
+treating it as an ordinary sensor reading — this avoids a misleading telemetry point
+named after an "unknown" sensor kind with a meaningless numeric value.
+
+Note on why this exists: ThingsBoard's built-in device connectivity/inactivity tracking
+does **not** require a dedicated heartbeat key — any telemetry message from a device
+(gateway-connected or not) refreshes its "last activity" time, and ThingsBoard's native
+Device Inactivity Alarm feature (importable as a no-code alarm rule scoped to a device
+profile) can already alert on stale devices without any bridge-side logic. The
+dedicated heartbeat key exists purely for dashboard readability — so a human looking at
+device history sees a clearly-labeled liveness signal instead of a stray reading mixed
+into a real sensor's data — not because the platform requires it for offline detection.
+This distinction is worth remembering before adding more bridge-side "liveness" logic
+that the platform may already provide natively. Not independently verified yet: how
+ThingsBoard's native inactivity tracking behaves specifically for devices connected
+through the gateway API (as opposed to devices with their own direct MQTT session) —
+worth checking in the ThingsBoard UI before relying on it.
 
 ## Test data source module (implemented)
 
 To avoid permanently embedding test-data generation in the production firmware path, a
-separate, switchable test data source was implemented on the Wi-Fi ESP:
+separate, switchable test data source was implemented on the Wi-Fi ESP, driven by an
+interactive console over UART0 (the same UART used for logging):
 
-- **`gateway_pipeline.c`**: owns the `st_gateway_runtime_t` instance, registers a test
-  node in the gateway registry, and exposes `gateway_pipeline_send_test_record(value)`
-  — encodes a record, runs it through the full ingest → validate → JSON pipeline, and
-  publishes it over MQTT. Tracks a running sent-count.
-- **`test_loop.c`**: wraps an `esp_timer` to call the above periodically, with a
-  configurable interval. Values vary slightly per call (20.0–25.0 range) rather than
-  repeating a fixed value.
-- **`console_commands.c`** + ESP-IDF's `console` component: exposes an interactive
-  `gw>` prompt over the same UART used for logging, with commands `send_test [value]`,
-  `loop_start [interval_ms]`, `loop_stop`, and `status`.
+| Command | Effect |
+|---|---|
+| `send_test [value]` | Sends one routine reading (`record_class=state`, default value 21.5) through the full pipeline. |
+| `send_heartbeat` | Sends one health/heartbeat record (`record_class=health`, `sensor_kind=unknown`, `value=1.0`), matching the shape the real pod firmware sends every 15s. |
+| `loop_start [interval_ms]` | Starts auto-sending routine readings on a timer (default 5000ms), value varies 20.0–25.0 per call. |
+| `loop_stop` | Stops the auto-send loop. |
+| `status` | Prints MQTT connection state, total records sent, and whether the loop is running. |
+| `uart_test` | Self-tests the UART frame parser (see "UART link" below) — does not touch HiveMQ/MQTT. |
+| `help` | Lists all registered commands (built into ESP-IDF's `console` component). |
 
 Both manual single-record triggering and automated periodic sending share the same
 downstream call path a real UART-received record would use — switching from test data
-to real UART input later should only require replacing the data-source layer, not the
-processing pipeline.
+to real UART input later should only require replacing the data-source layer
+(`gateway_pipeline.c`'s test-record construction), not the processing pipeline itself
+(`gateway_runtime`, `gateway_json`, MQTT publish).
+
+**Usage**: after flashing, `idf.py -p <PORT> monitor` (or `flash monitor`) drops into
+the `gw>` prompt once Wi-Fi and MQTT have connected. Type a command and press Enter.
 
 ### Known issues (low priority)
 
@@ -140,27 +171,81 @@ processing pipeline.
   prints. Not reproduced at `loop_start 5000` with the stop command entered immediately
   after starting. Root cause is believed to be UART output/input contention within
   `esp_console`, not a logic fault in `test_loop_stop` — confirmed working correctly in
-  isolation. Possible fixes if this becomes a real problem: reduce log verbosity during
-  loop mode, or add a non-UART stop trigger (e.g. a physical button or a timeout-based
-  auto-stop). Not fixed; regarded as an acceptable limitation of a developer-only
-  debugging tool.
+  isolation. Not fixed; regarded as an acceptable limitation of a developer-only
+  debugging tool. Possible fixes if this becomes a real problem: reduce log verbosity
+  during loop mode, or add a non-UART stop trigger.
 - `TBGatewayMqttClient`'s own reconnect behaviour (if the local ThingsBoard connection
   drops after initial connect) has not been specifically tested. Only the initial
   connection retry (`connect_tb_gateway()`) and the HiveMQ-side reconnect have been
   verified.
 
+## UART link (implemented, payload interpretation pending)
+
+`uart_link.c`/`.h` implements the framing layer for the eventual Zigbee-side-gateway →
+Wi-Fi-side-board link: a background FreeRTOS task reads bytes from UART1, reassembles
+them into complete frames using the shared `gateway_frame.h` format (start marker,
+16-byte header, CRC16), and hands successfully-decoded frames to a handler function.
+
+**What is implemented and verified**: start-marker detection and resynchronization on
+garbage bytes, header parsing, frame-length calculation from the header's declared
+payload length, CRC16 validation via `st_gateway_frame_decode`, and multi-call buffering
+(a frame can arrive across multiple UART reads). Verified via the `uart_test` console
+command, which constructs a real 48-byte frame (16-byte header + 30-byte SiteTwin
+Zigbee payload + 2-byte CRC) using the same encoder functions the Zigbee side would use,
+and feeds it directly into the parser — bypassing the UART peripheral entirely, so this
+validates the parsing logic independently of physical hardware or payload-format
+uncertainty.
+
+**What is a stub, pending the payload-format decision**: `uart_link_handle_frame()` in
+`uart_link.c` currently only logs the frame header fields (source address, boot ID,
+sequence, payload length) and does not interpret `payload` at all. This is the single
+function to fill in once the UART payload format is confirmed — it should convert the
+raw payload bytes into a `st_telemetry_record_t` (most likely by calling the existing
+`st_gateway_runtime_ingest_zigbee_source`, mirroring what `gateway_pipeline.c`'s test
+path already does with synthetic data) and forward the result through the same
+JSON/MQTT publish path already in use.
+
+**What has NOT been tested, and should be before this is relied on for real hardware
+integration**:
+
+- Malformed input: a frame with a deliberately-corrupted CRC, a truncated frame (fewer
+  bytes than the header declares), garbage bytes preceding a valid frame, and two frames
+  arriving back-to-back in a single UART read (frame boundaries not aligned with buffer
+  reads). The resync/discard logic exists in code but has not been exercised by any of
+  these cases.
+- No timeout exists if a partial frame is received and the rest never arrives (e.g. the
+  far end disconnects mid-transmission) — the parser will simply wait indefinitely for
+  more bytes, only recovering via the unrelated buffer-overflow-reset path if enough
+  further data eventually arrives.
+- The receive task itself has no health/liveness monitoring; `status` does not currently
+  report whether it is still running.
+- The physical UART peripheral has not been exercised at all — `uart_test` bypasses it
+  by design. A physical loopback test (jumper wire from this board's TX pin to its own
+  RX pin) or a real connection to the Zigbee-side board has not been performed.
+- Baud rate (115200) and pin assignment (TXD=GPIO4, RXD=GPIO5) are arbitrary
+  placeholders, not confirmed with the Zigbee-side owner or verified against the actual
+  wiring plan.
+
+This is considered an appropriate stopping point for the current milestone: the parsing
+logic that is stable regardless of the payload-format decision has been built and
+verified; the parts that would need real hardware or a confirmed payload format to
+meaningfully test have been deliberately left for the real integration phase rather than
+tested against synthetic edge cases with limited practical value.
+
 ## Repository layout
 
 ```
-SiteTwin-main/
+SiteTwin/
 ├── firmware/              (Zigbee-side firmware, maintained by the Zigbee owner)
 ├── gateway-wifi/           (this board's ESP-IDF project — Wi-Fi ESP firmware)
 │   ├── components/sitetwin_core/   (shared library, byte-identical to Zigbee-side copy)
 │   └── main/
-│       ├── gateway-wifi.c          (Wi-Fi/MQTT/console init, app_main)
-│       ├── gateway_pipeline.c/.h   (test record generation + full ingest pipeline)
-│       ├── test_loop.c/.h          (periodic auto-send via esp_timer)
-│       ├── console_commands.c/.h   (interactive gw> prompt commands)
+│       ├── gateway-wifi.c          (Wi-Fi/MQTT/console/UART init, app_main) [core]
+│       ├── mqtt_publish.h          (MQTT publish/status interface)          [core]
+│       ├── uart_link.c/.h          (UART frame receive/parse framework)     [core, payload interp. pending]
+│       ├── gateway_pipeline.c/.h   (ingest pipeline + test record generation) [mixed: pipeline=core, record gen=test]
+│       ├── test_loop.c/.h          (periodic auto-send via esp_timer)       [test only]
+│       ├── console_commands.c/.h   (interactive gw> prompt commands)        [test only, except `status`]
 │       └── wifi_config.h           (credentials, gitignored)
 └── pi-bridge/               (Raspberry Pi bridge script)
     ├── bridge.py
@@ -169,17 +254,28 @@ SiteTwin-main/
     └── requirements.txt
 ```
 
+`[core]` = needed regardless of test vs. real UART input. `[test only]` = built to
+support development/validation and expected to be replaced or removed once real UART
+input is wired in. `gateway_pipeline.c` is split: its pipeline-invocation logic
+(encode → ingest → JSON → publish) is reused by the eventual real UART path; its
+test-record construction is not.
+
 ## Immediate next steps
 
-1. **Blocked, pending Zigbee-side owner**: confirm UART payload contents.
+1. **Blocked, pending Zigbee-side owner**: confirm UART payload contents. Separately,
+   confirm baud rate and TX/RX pin assignment (does not require design discussion).
 2. ~~Design and implement the switchable test data-source module~~ **Done.**
-3. Design the heartbeat/health record representation in `bridge.py`. Cannot be fully
-   verified until real UART data is available; may implement against synthetic health
-   records in the meantime.
-4. ~~Harden `bridge.py`~~ **Done**: systemd service (auto-start, auto-restart on
-   failure), HiveMQ reconnect handling, ThingsBoard connect retry, persistent logging.
+3. ~~Design the heartbeat/health record representation in `bridge.py`~~ **Done.**
+4. ~~Harden `bridge.py`~~ **Done**: systemd service, HiveMQ reconnect, ThingsBoard
+   connect retry, persistent logging.
 5. ~~Decide whether to carry `quality_flags`/`sequence`/`boot_id` into ThingsBoard~~
-   **Done** — see "Known data loss" above. Still open: request `priority` be added to
-   `st_gateway_telemetry_to_json` upstream (shared code change, needs team input).
-6. Only after (1) is resolved: implement real UART reception on this board using
-   `gateway_frame_decode`.
+   **Done.** Still open: request `priority` be added to `st_gateway_telemetry_to_json`
+   upstream (shared code change, needs team input).
+6. ~~Implement UART frame receive/parse framework~~ **Done** (framing/CRC layer only;
+   see "UART link" above for what remains).
+7. Only after (1) is resolved: implement payload interpretation in
+   `uart_link_handle_frame()`, wiring it into the existing ingest → JSON → MQTT publish
+   path already used by `gateway_pipeline.c`.
+8. Before relying on the UART link for real integration: physical loopback or real
+   two-board test (not yet performed), and the untested edge cases listed under
+   "UART link" above.
