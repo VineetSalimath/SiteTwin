@@ -8,9 +8,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "driver/uart.h"
 #include "esp_zigbee.h"
 
 #include "sitetwin/contracts.h"
+#include "sitetwin/gateway_frame.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/zigbee_payload.h"
 
@@ -20,11 +22,59 @@
 #define ST_ZIGBEE_STORAGE_PARTITION "zb_storage"
 #define ST_GATEWAY_ADDRESS 0x0000U
 #define ST_HEARTBEAT_PERIOD_MS 15000U
+#define ST_GATEWAY_UART_PORT UART_NUM_1
+#define ST_GATEWAY_UART_RX_BUFFER_SIZE 256U
+#define ST_GATEWAY_UART_TX_BUFFER_SIZE 1024U
 
 static const char *TAG = "sitetwin_zigbee";
 static st_gateway_runtime_t gateway_runtime;
 static volatile bool pod_joined;
 static uint32_t heartbeat_sequence;
+
+#if SITETWIN_GATEWAY_ROLE_BUILD
+static void gateway_uart_init(void)
+{
+    const uart_config_t config = {
+        .baud_rate = CONFIG_SITETWIN_GATEWAY_UART_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    ESP_ERROR_CHECK(uart_driver_install(ST_GATEWAY_UART_PORT, ST_GATEWAY_UART_RX_BUFFER_SIZE,
+                                        ST_GATEWAY_UART_TX_BUFFER_SIZE, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(ST_GATEWAY_UART_PORT, &config));
+    ESP_ERROR_CHECK(uart_set_pin(ST_GATEWAY_UART_PORT, CONFIG_SITETWIN_GATEWAY_UART_TX_PIN,
+                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_LOGI(TAG, "UART bridge ready: UART%d TX GPIO%d at %d baud", ST_GATEWAY_UART_PORT,
+             CONFIG_SITETWIN_GATEWAY_UART_TX_PIN, CONFIG_SITETWIN_GATEWAY_UART_BAUD_RATE);
+}
+
+static int gateway_uart_forward(const ezb_zcl_cmd_hdr_t *zigbee_header, const uint8_t *payload,
+                                uint16_t payload_length, const st_telemetry_record_t *record)
+{
+    st_gateway_frame_header_t frame_header = {
+        .version = ST_GATEWAY_FRAME_VERSION,
+        .message_type = record->record_class == ST_RECORD_HEALTH ? ST_GATEWAY_MESSAGE_HEALTH
+                                                                  : ST_GATEWAY_MESSAGE_TELEMETRY,
+        .payload_length = payload_length,
+        .source_address = zigbee_header->src_addr.u.short_addr,
+        .boot_id = record->reading.boot_id,
+        .sequence = record->reading.sequence,
+    };
+    uint8_t frame[ST_GATEWAY_FRAME_HEADER_SIZE + ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE +
+                  ST_GATEWAY_FRAME_CRC_SIZE];
+    size_t frame_length;
+
+    if (st_gateway_frame_encode(&frame_header, payload, frame, sizeof(frame), &frame_length) != 0) {
+        return -1;
+    }
+    int written = uart_write_bytes(ST_GATEWAY_UART_PORT, frame, frame_length);
+    return written == (int)frame_length ? 0 : -1;
+}
+#endif
 
 static void commissioning_retry_task(void *context)
 {
@@ -51,6 +101,9 @@ static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *heade
     char sensor_id[ST_SENSOR_ID_MAX_LEN];
     uint8_t sensor_slot;
     st_gateway_ingress_result_t result;
+#if SITETWIN_GATEWAY_ROLE_BUILD
+    st_telemetry_record_t record;
+#endif
 
     if (header == NULL || payload == NULL ||
         header->cluster_id != ST_ZIGBEE_CLUSTER_ID ||
@@ -66,6 +119,21 @@ static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *heade
     result = st_gateway_runtime_ingest_zigbee(&gateway_runtime, payload, payload_length,
                                               pod_id, sensor_id);
     ESP_LOGI(TAG, "Telemetry from %s/%s: ingress result %d", pod_id, sensor_id, (int)result);
+#if SITETWIN_GATEWAY_ROLE_BUILD
+    if (result == ST_GATEWAY_INGRESS_ACCEPTED) {
+        int decode_result = st_zigbee_telemetry_decode(payload, payload_length, pod_id, sensor_id,
+                                                       &record, &sensor_slot);
+        if (decode_result == 0) {
+            if (gateway_uart_forward(header, payload, payload_length, &record) != 0) {
+                ESP_LOGW(TAG, "UART forward failed for %s/%s", pod_id, sensor_id);
+            } else {
+                /* The Wi-Fi ESP owns onward delivery after a successful UART hand-off.
+                 * Remove this record so the coordinator's local queue cannot fill. */
+                (void)st_gateway_runtime_next_record(&gateway_runtime, &record);
+            }
+        }
+    }
+#endif
     return result == ST_GATEWAY_INGRESS_INVALID ? EZB_ZCL_STATUS_INVALID_FIELD : EZB_ZCL_STATUS_SUCCESS;
 }
 
@@ -168,6 +236,7 @@ static bool zigbee_signal_handler(const ezb_app_signal_t *signal)
 {
     ezb_app_signal_type_t type = ezb_app_signal_get_type(signal);
 
+    ESP_LOGI(TAG, "Zigbee signal %d", (int)type);
     switch (type) {
     case EZB_ZDO_SIGNAL_SKIP_STARTUP:
         (void)ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_INITIALIZATION);
@@ -175,6 +244,8 @@ static bool zigbee_signal_handler(const ezb_app_signal_t *signal)
     case EZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case EZB_BDB_SIGNAL_DEVICE_REBOOT: {
         ezb_bdb_comm_status_t status = *(ezb_bdb_comm_status_t *)ezb_app_signal_get_params(signal);
+        ESP_LOGI(TAG, "Zigbee startup status %d, factory new=%d", (int)status,
+                 ezb_bdb_is_factory_new());
         if (status != EZB_BDB_STATUS_SUCCESS) {
             retry_commissioning(EZB_BDB_MODE_INITIALIZATION);
             break;
@@ -183,7 +254,8 @@ static bool zigbee_signal_handler(const ezb_app_signal_t *signal)
         if (ezb_bdb_is_factory_new()) {
             (void)ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_FORMATION);
         } else {
-            (void)ezb_bdb_open_network(240);
+            ezb_err_t open_result = ezb_bdb_open_network(240);
+            ESP_LOGI(TAG, "Gateway restored network; opening joining result %d", (int)open_result);
         }
 #else
         if (ezb_bdb_is_factory_new()) {
@@ -201,6 +273,8 @@ static bool zigbee_signal_handler(const ezb_app_signal_t *signal)
             ESP_LOGI(TAG, "Gateway formed network; opening joining for 240 seconds");
             (void)ezb_bdb_open_network(240);
         } else {
+            ESP_LOGW(TAG, "Gateway network formation failed with status %d; retrying",
+                     (int)*(ezb_bdb_comm_status_t *)ezb_app_signal_get_params(signal));
             retry_commissioning(EZB_BDB_MODE_NETWORK_FORMATION);
         }
 #endif
@@ -278,12 +352,15 @@ static void zigbee_task(void *context)
     };
 
     (void)context;
+    ESP_LOGI(TAG, "Initialising Zigbee stack");
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
+    ESP_LOGI(TAG, "Configuring Zigbee commissioning");
     ezb_aps_secur_enable_distributed_security(false);
     ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set(1UL << CONFIG_SITETWIN_ZIGBEE_CHANNEL));
     ESP_ERROR_CHECK(ezb_bdb_set_secondary_channel_set(0));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(zigbee_signal_handler));
     register_site_twin_endpoint();
+    ESP_LOGI(TAG, "Starting Zigbee stack on channel %d", CONFIG_SITETWIN_ZIGBEE_CHANNEL);
     ESP_ERROR_CHECK(esp_zigbee_start(false));
     esp_zigbee_launch_mainloop();
 }
@@ -294,6 +371,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init_partition(ST_ZIGBEE_STORAGE_PARTITION));
 #if SITETWIN_GATEWAY_ROLE_BUILD
     st_gateway_runtime_init(&gateway_runtime);
+    gateway_uart_init();
     ESP_LOGI(TAG, "Starting SiteTwin gateway/coordinator image");
 #else
     ESP_LOGI(TAG, "Starting SiteTwin pod/end-device image");

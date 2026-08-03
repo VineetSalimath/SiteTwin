@@ -19,6 +19,53 @@ static uint32_t s_sent_count = 0;
 #define TEST_POD_ID         "POD_1234"
 #define TEST_SENSOR_ID      "SLOT_0"
 
+static int gateway_pipeline_publish_next(const char *pod_id)
+{
+    char json[256];
+    char topic[96];
+
+    if (st_gateway_runtime_next_json(&s_runtime, json, sizeof(json)) != 0) {
+        ESP_LOGE(TAG, "Failed to convert record to JSON");
+        return -1;
+    }
+    snprintf(topic, sizeof(topic), "sitetwin/pods/%s/telemetry", pod_id);
+    if (gw_mqtt_publish(topic, json) != 0) {
+        ESP_LOGW(TAG, "MQTT publish skipped or failed (not connected?)");
+        return -1;
+    }
+    s_sent_count++;
+    ESP_LOGI(TAG, "Sent #%lu: %s", (unsigned long)s_sent_count, json);
+    return 0;
+}
+
+int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
+                                        const uint8_t *payload)
+{
+    char pod_id[ST_POD_ID_MAX_LEN];
+    char sensor_id[ST_SENSOR_ID_MAX_LEN];
+    uint8_t sensor_slot;
+    st_gateway_ingress_result_t result;
+
+    if (header == NULL || payload == NULL || header->version != ST_GATEWAY_FRAME_VERSION ||
+        (header->message_type != ST_GATEWAY_MESSAGE_TELEMETRY &&
+         header->message_type != ST_GATEWAY_MESSAGE_HEALTH) ||
+        header->payload_length != ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE ||
+        st_zigbee_telemetry_sensor_slot(payload, header->payload_length, &sensor_slot) != 0) {
+        ESP_LOGW(TAG, "Rejected unsupported UART frame");
+        return -1;
+    }
+
+    snprintf(pod_id, sizeof(pod_id), "POD_%04X", header->source_address);
+    snprintf(sensor_id, sizeof(sensor_id), "SLOT_%u", (unsigned int)sensor_slot);
+    result = st_gateway_runtime_ingest_zigbee(&s_runtime, payload, header->payload_length,
+                                              pod_id, sensor_id);
+    if (result != ST_GATEWAY_INGRESS_ACCEPTED) {
+        ESP_LOGW(TAG, "UART frame ingress result=%d", (int)result);
+        return -1;
+    }
+    return gateway_pipeline_publish_next(pod_id);
+}
+
 void gateway_pipeline_init(void)
 {
     st_gateway_runtime_init(&s_runtime);

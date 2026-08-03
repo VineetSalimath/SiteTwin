@@ -6,10 +6,9 @@
 
 /* Initializes the UART peripheral and starts the background receive task.
  *
- * NOTE: baud rate and GPIO pins are placeholders pending confirmation with
- * the Zigbee-side owner. See "Open decisions" in GATEWAY_TO_SERVER_BRINGUP.md.
- * The outer frame format itself (start marker, header layout, CRC16) is not
- * a placeholder -- it comes from the shared, already-tested gateway_frame.c.
+ * UART1 receives the matching Zigbee gateway's default GPIO4 TX on GPIO5 at
+ * 115200 baud. The outer frame format (start marker, header layout, CRC16)
+ * comes from the shared, already-tested gateway_frame.c.
  */
 void uart_link_init(void);
 

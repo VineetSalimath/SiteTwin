@@ -5,14 +5,13 @@
 #include "esp_log.h"
 
 #include "sitetwin/gateway_frame.h"
+#include "gateway_pipeline.h"
 #include "uart_link.h"
 
 static const char *TAG = "uart_link";
 
-/* Placeholder physical-layer parameters. Not yet confirmed with the
- * Zigbee-side owner -- see "Open decisions" in GATEWAY_TO_SERVER_BRINGUP.md.
- * UART1 is used (not UART0), because UART0 is already claimed by the
- * esp_console REPL for logging and the interactive gw> command line. */
+/* UART1 is used instead of UART0, which is claimed by the esp_console REPL.
+ * The matching Zigbee gateway defaults to TX GPIO4 at 115200 baud. */
 #define UART_LINK_PORT         UART_NUM_1
 #define UART_LINK_BAUD_RATE    115200
 #define UART_LINK_TXD_PIN      4
@@ -28,26 +27,13 @@ static const char *TAG = "uart_link";
 static uint8_t s_parse_buffer[PARSE_BUFFER_SIZE];
 static size_t s_parse_buffer_len = 0;
 
-/* TODO (blocked on UART payload format confirmation): once the Zigbee-side
- * owner confirms what the frame payload actually contains, implement the
- * conversion from raw payload bytes into a usable telemetry record here,
- * and forward it into gateway_pipeline's ingest path (the same
- * st_gateway_runtime_ingest_zigbee_source / next_json / MQTT publish
- * sequence already used by the test data source).
- *
- * For now this only logs what a successfully-decoded frame contained, so
- * the framing/CRC logic itself can be validated independently of the
- * payload format decision. */
 static void uart_link_handle_frame(const st_gateway_frame_header_t *header,
                                     const uint8_t *payload)
 {
-    ESP_LOGI(TAG,
-             "Frame OK: type=%d source=0x%04X boot_id=%lu seq=%lu payload_len=%u "
-             "(payload decoding not yet implemented, pending format confirmation)",
-             (int)header->message_type, header->source_address,
-             (unsigned long)header->boot_id, (unsigned long)header->sequence,
-             (unsigned)header->payload_length);
-    (void)payload;
+    if (gateway_pipeline_process_uart_frame(header, payload) == 0) {
+        ESP_LOGI(TAG, "Forwarded frame from 0x%04X sequence %lu", header->source_address,
+                 (unsigned long)header->sequence);
+    }
 }
 
 /* Scans the reassembly buffer for a complete, CRC-valid frame starting at
@@ -143,6 +129,6 @@ void uart_link_init(void)
                                   UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
     xTaskCreate(uart_link_rx_task, "uart_link_rx", 4096, NULL, 5, NULL);
-    ESP_LOGI(TAG, "UART link initialised: port=%d baud=%d txd=%d rxd=%d (placeholder pins, unconfirmed)",
+    ESP_LOGI(TAG, "UART link initialised: port=%d baud=%d txd=%d rxd=%d",
              (int)UART_LINK_PORT, UART_LINK_BAUD_RATE, UART_LINK_TXD_PIN, UART_LINK_RXD_PIN);
 }

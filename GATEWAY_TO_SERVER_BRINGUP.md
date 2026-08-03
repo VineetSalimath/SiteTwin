@@ -30,9 +30,10 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
   exists between the two boards' firmware as of this writing.
 - `bridge.py` runs as a systemd service (`sitetwin-bridge.service`): starts on boot,
   restarts automatically on failure, logs to both `journalctl` and a local file.
-- A UART frame receive/parse framework is implemented and self-test verified (see
-  "UART link" below). It correctly reassembles and CRC-validates a synthetic frame
-  end to end. Payload interpretation is not yet implemented — see "Open decisions."
+- The physical UART hand-off is verified end to end: a Zigbee pod health frame is accepted
+  by the Zigbee coordinator, carried over UART1 (GPIO4 TX → GPIO5 RX, shared GND),
+  CRC-validated by the Wi-Fi ESP, encoded as JSON, published to HiveMQ, and acknowledged
+  by the broker.
 
 ## Confirmed but hardcoded for now
 
@@ -44,8 +45,8 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
   `st_zigbee_telemetry_encode`) rather than received over UART. This exercises the same
   downstream pipeline (`gateway_runtime`, `gateway_json`) that a real UART-received
   payload would use.
-- The UART link's physical parameters (baud rate 115200, TXD=GPIO4, RXD=GPIO5, UART1)
-  are placeholders, not confirmed with the Zigbee-side owner. See "UART link" below.
+- The default UART link is 115200 baud, UART1, with Zigbee gateway GPIO4 (TX) wired to
+  Wi-Fi gateway GPIO5 (RX), plus shared GND. Confirm both boards' pin maps before wiring.
 - HiveMQ and ThingsBoard credentials are stored in `wifi_config.h` (Wi-Fi ESP, excluded
   from git) and `pi-bridge/config.py` (bridge script, excluded from git). Both are
   plaintext local files, not a secrets manager — acceptable for the current project
@@ -74,28 +75,15 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
 
 ## Open decisions — do not hard-code further assumptions
 
-### UART payload format between the two ESP32 boards — Blocked, pending confirmation
+### UART payload format between the two ESP32 boards — Resolved and verified
 
-`SITETWIN_ZIGBEE_BRINGUP.md` confirms the Zigbee-side gateway is responsible for Zigbee
-reception and validation only, and that "the planned gateway-to-server ESP remains
-responsible for the later UART frame and JSON conversion." This places JSON conversion
-on this board, consistent with the current implementation. However, the exact contents
-of the UART frame *payload* are not yet finalized. The strongest available evidence
-(the `gateway_runtime_ingest_zigbee_source` function signature, which accepts a raw
-30-byte Zigbee payload plus a source address) suggests the UART payload will likely be
-the validated 30-byte SiteTwin payload plus its originating short address, but this has
-not been confirmed with the Zigbee-side owner.
+The UART payload is the unchanged 30-byte SiteTwin Zigbee telemetry payload. Its
+originating short address, boot ID, and sequence are carried in a shared 16-byte frame
+header, followed by CRC16; both boards use the same `gateway_frame.c` implementation.
 
-The outer frame format (start marker, header layout, CRC16) is **not** part of this open
-question — it comes from the shared, already-tested `gateway_frame.c` and both boards
-use it identically. Only the payload's internal contents are undecided.
-
-**Separately, and independently answerable without the Zigbee-side owner**, two small
-physical-layer parameters need a one-line confirmation before real hardware testing can
-begin: UART baud rate (this board defaults to 115200, pending agreement) and which GPIO
-pins carry TX/RX on each board (this board currently uses GPIO4/GPIO5, arbitrarily
-chosen, not yet coordinated with the physical wiring on the other board). Neither
-requires design discussion — just confirmation.
+The deployed one-way link is Zigbee gateway GPIO4 (UART1 TX) to Wi-Fi gateway GPIO5
+(UART1 RX), with shared GND, at 115200 baud 8N1. The physical connection and complete
+Zigbee-to-HiveMQ delivery path were verified on ESP32-C6-DevKitC-1 boards.
 
 ### Pod/sensor naming scheme — Resolved
 
@@ -179,7 +167,7 @@ the `gw>` prompt once Wi-Fi and MQTT have connected. Type a command and press En
   connection retry (`connect_tb_gateway()`) and the HiveMQ-side reconnect have been
   verified.
 
-## UART link (implemented, payload interpretation pending)
+## UART link (implemented)
 
 `uart_link.c`/`.h` implements the framing layer for the eventual Zigbee-side-gateway →
 Wi-Fi-side-board link: a background FreeRTOS task reads bytes from UART1, reassembles
@@ -196,14 +184,11 @@ and feeds it directly into the parser — bypassing the UART peripheral entirely
 validates the parsing logic independently of physical hardware or payload-format
 uncertainty.
 
-**What is a stub, pending the payload-format decision**: `uart_link_handle_frame()` in
-`uart_link.c` currently only logs the frame header fields (source address, boot ID,
-sequence, payload length) and does not interpret `payload` at all. This is the single
-function to fill in once the UART payload format is confirmed — it should convert the
-raw payload bytes into a `st_telemetry_record_t` (most likely by calling the existing
-`st_gateway_runtime_ingest_zigbee_source`, mirroring what `gateway_pipeline.c`'s test
-path already does with synthetic data) and forward the result through the same
-JSON/MQTT publish path already in use.
+**Payload interpretation is implemented**: the Zigbee gateway sends the unchanged
+30-byte SiteTwin Zigbee telemetry payload inside the shared gateway frame. On a valid
+telemetry or health frame, `uart_link_handle_frame()` derives the bring-up IDs
+`POD_<short-address>` and `SLOT_<slot>`, validates and deduplicates through
+`st_gateway_runtime_t`, converts to JSON, and publishes through the existing MQTT path.
 
 **What has NOT been tested, and should be before this is relied on for real hardware
 integration**:
@@ -222,15 +207,12 @@ integration**:
 - The physical UART peripheral has not been exercised at all — `uart_test` bypasses it
   by design. A physical loopback test (jumper wire from this board's TX pin to its own
   RX pin) or a real connection to the Zigbee-side board has not been performed.
-- Baud rate (115200) and pin assignment (TXD=GPIO4, RXD=GPIO5) are arbitrary
-  placeholders, not confirmed with the Zigbee-side owner or verified against the actual
-  wiring plan.
 
-This is considered an appropriate stopping point for the current milestone: the parsing
-logic that is stable regardless of the payload-format decision has been built and
-verified; the parts that would need real hardware or a confirmed payload format to
-meaningfully test have been deliberately left for the real integration phase rather than
-tested against synthetic edge cases with limited practical value.
+The default baud rate and pins now match on both images, but their physical availability
+must still be checked against the board pin maps before applying power.
+
+The remaining milestone is physical verification: build and flash both images, wire the
+one-way UART link, and confirm that a Zigbee health frame reaches MQTT and ThingsBoard.
 
 ## Repository layout
 
@@ -271,11 +253,7 @@ test-record construction is not.
 5. ~~Decide whether to carry `quality_flags`/`sequence`/`boot_id` into ThingsBoard~~
    **Done.** Still open: request `priority` be added to `st_gateway_telemetry_to_json`
    upstream (shared code change, needs team input).
-6. ~~Implement UART frame receive/parse framework~~ **Done** (framing/CRC layer only;
-   see "UART link" above for what remains).
-7. Only after (1) is resolved: implement payload interpretation in
-   `uart_link_handle_frame()`, wiring it into the existing ingest → JSON → MQTT publish
-   path already used by `gateway_pipeline.c`.
-8. Before relying on the UART link for real integration: physical loopback or real
+6. ~~Implement UART frame receive, parsing, and payload interpretation~~ **Done**.
+7. Before relying on the UART link for real integration: physical loopback or real
    two-board test (not yet performed), and the untested edge cases listed under
    "UART link" above.
