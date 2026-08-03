@@ -1,21 +1,22 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$coreInclude = Join-Path $projectRoot 'components\sitetwin_core\include'
+$repositoryRoot = Split-Path -Parent $projectRoot
+$coreInclude = Join-Path $repositoryRoot 'components\sitetwin_core\include'
 $fakeInclude = Join-Path $projectRoot 'components\sitetwin_fake_hal\include'
 $outputPath = Join-Path $env:TEMP 'sitetwin-host-tests.exe'
 $sources = @(
-    (Join-Path $projectRoot 'components\sitetwin_core\src\contracts.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\gateway_frame.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\gateway_json.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\gateway_processor.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\gateway_registry.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\gateway_runtime.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\pod_runtime.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\reporting_policy.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\sensor_registry.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\telemetry_queue.c'),
-    (Join-Path $projectRoot 'components\sitetwin_core\src\zigbee_payload.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\contracts.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_frame.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_json.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_processor.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_registry.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_runtime.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\pod_runtime.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\reporting_policy.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\sensor_registry.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\telemetry_queue.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\zigbee_payload.c'),
     (Join-Path $projectRoot 'components\sitetwin_fake_hal\src\fake_sensor.c'),
     (Join-Path $PSScriptRoot 'test_runner.c')
 )
