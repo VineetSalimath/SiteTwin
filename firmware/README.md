@@ -4,7 +4,8 @@ This is the shared ESP-IDF firmware for SiteTwin pods and the Zigbee-side gatewa
 
 ## Layout
 
-- `components/sitetwin_core`: portable production logic with no ESP-IDF or board-driver dependencies.
+- `../components/sitetwin_core`: the canonical portable production logic, shared by both
+  ESP-IDF projects through `EXTRA_COMPONENT_DIRS`.
 - `components/sitetwin_fake_hal`: deterministic fake sensor drivers used only by host tests and simulations.
 - `main`: the ESP-IDF composition root, including the deployed ESP Zigbee custom-cluster adapter.
 - `tools/gateway.ps1` and `tools/pod.ps1`: role-specific build wrappers that create independent gateway and pod build directories.

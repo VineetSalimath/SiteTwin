@@ -25,9 +25,8 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
   readings and heartbeat records) travel from the Wi-Fi ESP through HiveMQ and the
   bridge script into ThingsBoard device entities, visible in the UI, with all metadata
   fields intact (see "Known data loss" below — resolved).
-- `sitetwin_core` on this board is byte-identical to the version used in the
-  `sitetwin-zigbee-bringup` branch (verified via `diff -rq`), so no shared-contract drift
-  exists between the two boards' firmware as of this writing.
+- Both ESP-IDF projects consume the same canonical `components/sitetwin_core` component,
+  preventing shared-contract drift between the Zigbee and Wi-Fi firmware.
 - `bridge.py` runs as a systemd service (`sitetwin-bridge.service`): starts on boot,
   restarts automatically on failure, logs to both `journalctl` and a local file.
 - The physical UART hand-off is verified end to end: a Zigbee pod health frame is accepted
@@ -190,8 +189,12 @@ telemetry or health frame, `uart_link_handle_frame()` derives the bring-up IDs
 `POD_<short-address>` and `SLOT_<slot>`, validates and deduplicates through
 `st_gateway_runtime_t`, converts to JSON, and publishes through the existing MQTT path.
 
-**What has NOT been tested, and should be before this is relied on for real hardware
-integration**:
+**Physical integration is verified**: a Zigbee pod health record was accepted by the
+coordinator, sent as a 48-byte CRC-protected UART frame over GPIO4 TX to GPIO5 RX,
+validated and converted to JSON by the Wi-Fi ESP, published to HiveMQ over MQTTS, and
+acknowledged by the MQTT broker.
+
+**Still to be hardened**:
 
 - Malformed input: a frame with a deliberately-corrupted CRC, a truncated frame (fewer
   bytes than the header declares), garbage bytes preceding a valid frame, and two frames
@@ -204,27 +207,20 @@ integration**:
   further data eventually arrives.
 - The receive task itself has no health/liveness monitoring; `status` does not currently
   report whether it is still running.
-- The physical UART peripheral has not been exercised at all — `uart_test` bypasses it
-  by design. A physical loopback test (jumper wire from this board's TX pin to its own
-  RX pin) or a real connection to the Zigbee-side board has not been performed.
-
-The default baud rate and pins now match on both images, but their physical availability
-must still be checked against the board pin maps before applying power.
-
-The remaining milestone is physical verification: build and flash both images, wire the
-one-way UART link, and confirm that a Zigbee health frame reaches MQTT and ThingsBoard.
+- The physical UART transport is validated, but malformed-frame coverage, truncated-frame
+  recovery, and sustained-operation behaviour still need explicit tests.
 
 ## Repository layout
 
 ```
 SiteTwin/
+├── components/sitetwin_core/ (canonical portable shared library)
 ├── firmware/              (Zigbee-side firmware, maintained by the Zigbee owner)
 ├── gateway-wifi/           (this board's ESP-IDF project — Wi-Fi ESP firmware)
-│   ├── components/sitetwin_core/   (shared library, byte-identical to Zigbee-side copy)
 │   └── main/
 │       ├── gateway-wifi.c          (Wi-Fi/MQTT/console/UART init, app_main) [core]
 │       ├── mqtt_publish.h          (MQTT publish/status interface)          [core]
-│       ├── uart_link.c/.h          (UART frame receive/parse framework)     [core, payload interp. pending]
+│       ├── uart_link.c/.h          (UART receive/parse/publish path)        [core]
 │       ├── gateway_pipeline.c/.h   (ingest pipeline + test record generation) [mixed: pipeline=core, record gen=test]
 │       ├── test_loop.c/.h          (periodic auto-send via esp_timer)       [test only]
 │       ├── console_commands.c/.h   (interactive gw> prompt commands)        [test only, except `status`]

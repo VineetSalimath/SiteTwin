@@ -43,7 +43,7 @@ Current reading flow:
 
 Current gateway flow:
 
-`ESP Zigbee custom-command callback -> payload decode -> validation/deduplication -> delivery queue -> UART frame -> server/Wi-Fi ESP -> JSON -> MQTT adapter (future)`
+`ESP Zigbee custom-command callback -> payload decode -> validation/deduplication -> CRC-protected UART frame -> Wi-Fi ESP -> JSON -> MQTTS/HiveMQ -> ThingsBoard bridge`
 
 ## Deployed Zigbee Bring-Up
 
