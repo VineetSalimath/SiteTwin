@@ -19,6 +19,24 @@ uses `st_zigbee_telemetry_encode`; the gateway uses `st_gateway_runtime_ingest_z
 No JSON is created on this Zigbee-side gateway. The planned gateway-to-server ESP remains
 responsible for the later UART frame and JSON conversion.
 
+## Wi-Fi gateway hand-off
+
+Each accepted gateway payload is forwarded over UART1 as a 48-byte gateway frame: the
+16-byte `st_gateway_frame_header_t`, the unchanged 30-byte Zigbee payload, and a CRC16.
+The header source address, boot ID, and sequence mirror the accepted record. The Wi-Fi
+ESP validates this frame and feeds the payload into its existing JSON and MQTT pipeline.
+
+The default bring-up wiring is one-way: Zigbee gateway GPIO4 (UART1 TX) to Wi-Fi gateway
+GPIO5 (UART1 RX), with a shared GND. Both images default to 115200 baud, 8N1. GPIO4 and
+the baud rate on the Zigbee image are Kconfig settings; confirm both boards' pin maps
+before wiring and change the values if either pin is unavailable.
+
+Do not connect the boards' USB-C ports directly as the data link. On the ESP32-C6-DevKitC-1
+those ports are USB device interfaces for a host computer to flash, monitor, or debug the
+board; they are not a board-to-board UART connection. A PC or Raspberry Pi can attach to
+both USB-C ports and relay data for a diagnostic experiment, but the deployed ESP-to-ESP
+link is the UART GPIO wiring above.
+
 ## Build and flash
 
 Open an **ESP-IDF v5.5.4 PowerShell** terminal in `firmware`. The first build downloads
@@ -51,6 +69,9 @@ sequence ...`.
 ## Current boundary
 
 This proves the deployed path through the SiteTwin binary payload and gateway ingestion.
+The coordinator-to-Wi-Fi-ESP UART hand-off is also verified: each accepted record is
+framed and sent from UART1 GPIO4; the Wi-Fi ESP receives it on GPIO5, validates it,
+publishes JSON to HiveMQ, and receives an MQTT publish acknowledgement.
+
 The remaining work is sensor hardware adapters, persistent pod identity/registry binding,
-delivery of received frames over UART to the server ESP, and the server ESP's JSON/Wi-Fi
-delivery.
+and longer-running resilience tests (power cycles plus Wi-Fi/MQTT recovery).

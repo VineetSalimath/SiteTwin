@@ -5,4 +5,12 @@ config SITETWIN_ZIGBEE_CHANNEL
     range 11 26
     default 13
 
+config SITETWIN_GATEWAY_UART_TX_PIN
+    int "Gateway-to-Wi-Fi UART TX GPIO"
+    default 4
+
+config SITETWIN_GATEWAY_UART_BAUD_RATE
+    int "Gateway-to-Wi-Fi UART baud rate"
+    default 115200
+
 endmenu
