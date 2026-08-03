@@ -1,8 +1,8 @@
 ---
 title: Architecture Baseline
 project: SiteTwin
-status: Firmware baseline implemented; hardware bring-up starting
-updated: 2026-07-29
+status: Zigbee transport deployed; sensor bring-up next
+updated: 2026-07-31
 tags:
   - sitetwin
   - architecture
@@ -50,6 +50,13 @@ Pods should not emit JSON over Zigbee. They should send typed embedded telemetry
 Routine telemetry is change-driven rather than sample-driven. Pods suppress values inside a configured deadband, enforce a minimum transmission interval, and send a maximum-silence heartbeat. Events and quality-state changes bypass suppression. This means forward sequence gaps can be intentional and must not be treated as packet loss without additional evidence.
 
 ## Hardware Integration Status
+
+## Zigbee Deployment Status
+
+- ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3 are the tested baseline.
+- Two ESP32-C6-DevKitC-1 boards now run SiteTwin images: a Coordinator gateway and an End Device pod.
+- The pod repeatedly sends the real 30-byte SiteTwin payload through custom cluster `0xFC00`; the gateway accepts it.
+- The temporary health producer will be replaced by real sensor-driver records without changing the radio payload path.
 
 Confirmed after the latest supervisor/team meeting:
 

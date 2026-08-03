@@ -40,7 +40,8 @@ noise measurements and the dissertation's required temporal resolution.
 - Validate record identifiers, enum values, sequence numbers, and boot identifiers.
 - Reject exact duplicates and stale records from the same pod, sensor, and boot session.
 - Accept sequence gaps because pod-side suppression intentionally creates them.
-- Convert accepted binary telemetry to JSON only at the MQTT boundary.
+- Keep accepted telemetry binary on the Zigbee-side gateway and forward it over the framed UART link.
+- Convert accepted binary telemetry to JSON only on the server/Wi-Fi ESP at the MQTT boundary.
 - Perform calibration, unit normalization, derived metrics, aggregation, timestamp mapping, and anomaly
   logic on the gateway.
 - Batch routine MQTT messages and send events immediately.

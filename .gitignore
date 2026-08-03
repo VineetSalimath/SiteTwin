@@ -53,6 +53,11 @@ bootloader/
 sdkconfig.old
 managed_components/
 dependencies.lock
+firmware/sdkconfig
+firmware/build_*/
+external/
+!firmware/tools/
+!firmware/tools/*.ps1
 
 # Python support scripts
 __pycache__/
@@ -79,3 +84,4 @@ Desktop.ini
 *.tmp
 *.temp
 ~$*
+.codex_doc_review/

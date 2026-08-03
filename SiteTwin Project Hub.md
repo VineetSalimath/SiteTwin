@@ -4,8 +4,8 @@ aliases:
   - SiteTwin
   - SiteTwin Overview
 project: SiteTwin
-status: Firmware foundation implemented; hardware acquired
-updated: 2026-07-29
+status: Zigbee firmware deployed; sensor integration pending
+updated: 2026-07-31
 tags:
   - sitetwin
   - hub
@@ -48,6 +48,14 @@ The project is no longer "one smart node with every sensor attached." The strong
 8. The acquired pod development board is the Espressif ESP32-C6-DevKitC-1.
 
 ## Current Firmware Progress
+
+### Latest deployed milestone
+
+Two ESP32-C6-DevKitC-1 boards now run the real SiteTwin Zigbee transport. The gateway is a
+Coordinator, the pod is an End Device, and the pod repeatedly sends the fixed 30-byte SiteTwin payload
+through custom cluster `0xFC00`. The gateway accepts each frame with `ingress result 0`. ESP-IDF v5.5.4
+and ESP Zigbee SDK v2.0.3 are the tested baseline. Sensor drivers, UART forwarding to the server/Wi-Fi
+ESP, and production reliability/security policy remain next work.
 
 Implemented and passing host tests:
 
