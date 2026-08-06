@@ -47,6 +47,12 @@ typedef struct {
     uint8_t missing_reported;
 } st_sht41_t;
 
+typedef struct {
+    float temperature_c;
+    float humidity_percent;
+    uint64_t acquired_at_ms;
+} st_sht41_environment_sample_t;
+
 int st_sht41_init(st_sht41_t *sensor, const st_sht41_config_t *config);
 st_physical_module_driver_t st_sht41_module_driver(st_sht41_t *sensor);
 
@@ -55,5 +61,9 @@ float st_sht41_raw_temperature_c(uint16_t raw);
 float st_sht41_raw_humidity_percent(uint16_t raw);
 uint32_t st_sht41_measurement_command_count(const st_sht41_t *sensor);
 uint64_t st_sht41_last_attempt_at_ms(const st_sht41_t *sensor);
+int st_sht41_get_valid_environment(const st_sht41_t *sensor,
+                                   uint64_t now_ms,
+                                   uint32_t maximum_age_ms,
+                                   st_sht41_environment_sample_t *sample);
 
 #endif

@@ -21,23 +21,28 @@ config SITETWIN_SCD41_ENABLED
     bool "Enable the Environment Pod SCD41 runtime"
     default y
 
+config SITETWIN_SGP40_ENABLED
+    bool "Enable the Environment Pod SGP40 VOC Index runtime"
+    default y
+    depends on SITETWIN_SHT41_ENABLED
+
 config SITETWIN_SHT41_I2C_CONTROLLER
     int "Environment Pod shared I2C controller"
     range 0 1
     default 0
-    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED
+    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED || SITETWIN_SGP40_ENABLED
 
 config SITETWIN_SHT41_I2C_SDA_PIN
     int "Environment Pod shared I2C SDA GPIO"
     range 0 30
     default 6
-    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED
+    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED || SITETWIN_SGP40_ENABLED
 
 config SITETWIN_SHT41_I2C_SCL_PIN
     int "Environment Pod shared I2C SCL GPIO"
     range 0 30
     default 7
-    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED
+    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED || SITETWIN_SGP40_ENABLED
 
 config SITETWIN_SHT41_I2C_ADDRESS
     hex "SHT41 7-bit I2C address"
@@ -49,18 +54,18 @@ config SITETWIN_SHT41_I2C_CLOCK_HZ
     int "Environment Pod shared I2C clock frequency"
     range 10000 1000000
     default 100000
-    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED
+    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED || SITETWIN_SGP40_ENABLED
 
 config SITETWIN_SHT41_I2C_TIMEOUT_MS
     int "Environment Pod shared I2C transaction timeout"
     range 10 5000
     default 100
-    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED
+    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED || SITETWIN_SGP40_ENABLED
 
 config SITETWIN_SHT41_ENABLE_INTERNAL_PULLUPS
     bool "Enable ESP32-C6 internal pull-ups on the shared I2C bus"
     default n
-    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED
+    depends on SITETWIN_SHT41_ENABLED || SITETWIN_SCD41_ENABLED || SITETWIN_SGP40_ENABLED
 
 config SITETWIN_SHT41_SAMPLE_INTERVAL_MS
     int "SHT41 physical sampling interval"
@@ -98,5 +103,30 @@ config SITETWIN_SCD41_POLL_INTERVAL_MS
     range 250 30000
     default 1000
     depends on SITETWIN_SCD41_ENABLED
+
+config SITETWIN_SGP40_I2C_ADDRESS
+    hex "SGP40 7-bit I2C address"
+    range 0x08 0x77
+    default 0x59
+    depends on SITETWIN_SGP40_ENABLED
+
+choice SITETWIN_SGP40_ALGORITHM_INTERVAL
+    prompt "SGP40 continuous sampling and VOC algorithm interval"
+    default SITETWIN_SGP40_ALGORITHM_INTERVAL_1S
+    depends on SITETWIN_SGP40_ENABLED
+
+config SITETWIN_SGP40_ALGORITHM_INTERVAL_1S
+    bool "1 second (recommended production baseline)"
+
+config SITETWIN_SGP40_ALGORITHM_INTERVAL_10S
+    bool "10 seconds (officially supported comparison mode)"
+
+endchoice
+
+config SITETWIN_SGP40_COMPENSATION_MAXIMUM_AGE_MS
+    int "Maximum age of valid SHT41 compensation"
+    range 250 30000
+    default 2000
+    depends on SITETWIN_SGP40_ENABLED
 
 endmenu

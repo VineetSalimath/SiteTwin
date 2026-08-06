@@ -353,3 +353,22 @@ uint64_t st_sht41_last_attempt_at_ms(const st_sht41_t *sensor)
 {
     return sensor == NULL ? 0U : sensor->last_attempt_at_ms;
 }
+
+int st_sht41_get_valid_environment(const st_sht41_t *sensor,
+                                   uint64_t now_ms,
+                                   uint32_t maximum_age_ms,
+                                   st_sht41_environment_sample_t *sample)
+{
+    if (sensor == NULL || sample == NULL || maximum_age_ms == 0U ||
+        sensor->has_last_valid == 0U || sensor->current_has_sample == 0U ||
+        sensor->current_quality_flags != 0U ||
+        now_ms < sensor->current_acquired_at_ms ||
+        now_ms - sensor->current_acquired_at_ms > maximum_age_ms) {
+        return -1;
+    }
+
+    sample->temperature_c = sensor->current_values[ST_SHT41_TEMPERATURE_CHANNEL];
+    sample->humidity_percent = sensor->current_values[ST_SHT41_HUMIDITY_CHANNEL];
+    sample->acquired_at_ms = sensor->current_acquired_at_ms;
+    return 0;
+}

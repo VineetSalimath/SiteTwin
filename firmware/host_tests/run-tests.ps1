@@ -22,15 +22,22 @@ $sources = @(
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\logical_channel_adapter.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\module_instance.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\scd41.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\sgp40.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\sht41.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\voc_index_algorithm.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\third_party\sensirion_gas_index_algorithm\sensirion_gas_index_algorithm.c'),
     (Join-Path $projectRoot 'components\sitetwin_fake_hal\src\fake_sensor.c'),
     (Join-Path $PSScriptRoot 'test_scd41.c'),
+    (Join-Path $PSScriptRoot 'test_sgp40.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
     (Join-Path $PSScriptRoot 'test_runner.c')
 )
 
+$gasAlgorithmInclude = Join-Path $repositoryRoot `
+    'components\sitetwin_sensors\third_party\sensirion_gas_index_algorithm'
+
 & gcc -std=c11 -Wall -Wextra -Werror -I $coreInclude -I $sensorRuntimeInclude `
-    -I $sensorsInclude -I $fakeInclude $sources -o $outputPath
+    -I $sensorsInclude -I $gasAlgorithmInclude -I $fakeInclude $sources -o $outputPath
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
