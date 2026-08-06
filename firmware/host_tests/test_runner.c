@@ -10,6 +10,8 @@
 #include "sitetwin/telemetry_queue.h"
 #include "sitetwin/zigbee_payload.h"
 
+int st_run_sensor_foundation_tests(void);
+
 #define EXPECT(condition)                                                                        \
     do {                                                                                         \
         if (!(condition)) {                                                                      \
@@ -683,6 +685,7 @@ int main(void)
     failures += test_zigbee_payload_round_trip();
     failures += test_gateway_runtime_pipeline();
     failures += test_gateway_registry_and_source_ingress();
+    failures += st_run_sensor_foundation_tests();
     failures += test_stress_runtime_and_gateway();
 
     if (failures != 0) {

@@ -1,6 +1,6 @@
 # SiteTwin Sensor Prototype Porting Assessment
 
-Status: initial architecture review; implementation approval required
+Status: Option C approved; implementation recorded in linked note
 
 Date: 2026-08-06
 
@@ -10,11 +10,16 @@ Base branch: `integration/end-to-end-v1`
 
 Exact base commit: `c38230a970843d420097cfb3f302eb529c1fda91`
 
-## Scope and stop point
+Implementation approval was received on 2026-08-06 for Option C, the strict
+first-failure policy, and invalid-quality normalization including `STALE`.
+Implementation details and verification evidence are recorded in
+[[SENSOR_RUNTIME_FOUNDATION_IMPLEMENTATION]].
 
-This assessment records the baseline and proposes the smallest compatible sensor-runtime foundation. It does not implement SHT41, Yicheng's drivers, final hot-swap electronics, or any change to the shared SiteTwin contracts. The existing Arduino sketches remain useful hardware-validation prototypes and are preserved unchanged.
+## Scope and approval boundary
 
-Implementation must stop here until the contract review and the recommended design are approved. In particular, this assessment does not authorize edits to `contracts.h`, `sensor_driver.h`, `sensor_registry.h`, `pod_runtime.h`, or `reporting_policy.h`.
+This assessment recorded the baseline and the smallest compatible sensor-runtime proposal before implementation. The existing Arduino sketches remain useful hardware-validation prototypes and are preserved unchanged.
+
+The initial stop point was satisfied when Option C, the optional acquisition timestamp, and the stricter validity normalization were approved. The linked implementation note records the resulting foundation and SHT41 work. Yicheng's drivers, SCD41, SGP40, ADXL345, final hot-swap electronics, and transport-contract changes remain outside this branch's approved scope.
 
 ## Baseline evidence
 
@@ -319,7 +324,8 @@ The complete proposed validity-rule change has no public signature. Its implemen
 
 ```c
 #define ST_QUALITY_INVALID_MASK \
-    (ST_QUALITY_CRC_FAILED | ST_QUALITY_OUT_OF_RANGE | ST_QUALITY_SENSOR_MISSING)
+    (ST_QUALITY_CRC_FAILED | ST_QUALITY_OUT_OF_RANGE | ST_QUALITY_SENSOR_MISSING | \
+     ST_QUALITY_STALE)
 
 if ((reading->quality_flags & ST_QUALITY_INVALID_MASK) == 0U) {
     reading->quality_flags |= ST_QUALITY_VALID;

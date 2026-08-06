@@ -13,4 +13,61 @@ config SITETWIN_GATEWAY_UART_BAUD_RATE
     int "Gateway-to-Wi-Fi UART baud rate"
     default 115200
 
+config SITETWIN_SHT41_ENABLED
+    bool "Enable the Environment Pod SHT41 runtime"
+    default y
+
+config SITETWIN_SHT41_I2C_CONTROLLER
+    int "SHT41 I2C controller"
+    range 0 1
+    default 0
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_I2C_SDA_PIN
+    int "SHT41 development wiring SDA GPIO"
+    range 0 30
+    default 6
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_I2C_SCL_PIN
+    int "SHT41 development wiring SCL GPIO"
+    range 0 30
+    default 7
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_I2C_ADDRESS
+    hex "SHT41 7-bit I2C address"
+    range 0x08 0x77
+    default 0x44
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_I2C_CLOCK_HZ
+    int "SHT41 I2C clock frequency"
+    range 10000 1000000
+    default 100000
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_I2C_TIMEOUT_MS
+    int "SHT41 I2C transaction timeout"
+    range 10 5000
+    default 100
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_ENABLE_INTERNAL_PULLUPS
+    bool "Enable ESP32-C6 internal I2C pull-ups"
+    default n
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_SAMPLE_INTERVAL_MS
+    int "SHT41 physical sampling interval"
+    range 250 3600000
+    default 1000
+    depends on SITETWIN_SHT41_ENABLED
+
+config SITETWIN_SHT41_CACHE_VALIDITY_MS
+    int "SHT41 shared-result cache validity"
+    range 10 1000
+    default 250
+    depends on SITETWIN_SHT41_ENABLED
+
 endmenu

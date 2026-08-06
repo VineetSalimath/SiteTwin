@@ -12,8 +12,12 @@
 #include "esp_zigbee.h"
 
 #include "sitetwin/contracts.h"
+#include "sitetwin/espidf_i2c_bus.h"
 #include "sitetwin/gateway_frame.h"
 #include "sitetwin/gateway_runtime.h"
+#include "sitetwin/module_instance.h"
+#include "sitetwin/pod_runtime.h"
+#include "sitetwin/sht41.h"
 #include "sitetwin/zigbee_payload.h"
 
 #define ST_ZIGBEE_CLUSTER_ID 0xFC00U
@@ -21,7 +25,6 @@
 #define ST_ZIGBEE_TELEMETRY_COMMAND 0x01U
 #define ST_ZIGBEE_STORAGE_PARTITION "zb_storage"
 #define ST_GATEWAY_ADDRESS 0x0000U
-#define ST_HEARTBEAT_PERIOD_MS 15000U
 #define ST_GATEWAY_UART_PORT UART_NUM_1
 #define ST_GATEWAY_UART_RX_BUFFER_SIZE 256U
 #define ST_GATEWAY_UART_TX_BUFFER_SIZE 1024U
@@ -29,7 +32,20 @@
 static const char *TAG = "sitetwin_zigbee";
 static st_gateway_runtime_t gateway_runtime;
 static volatile bool pod_joined;
-static uint32_t heartbeat_sequence;
+
+#if !SITETWIN_GATEWAY_ROLE_BUILD
+#ifdef CONFIG_SITETWIN_SHT41_ENABLE_INTERNAL_PULLUPS
+#define ST_SHT41_INTERNAL_PULLUPS_ENABLED true
+#else
+#define ST_SHT41_INTERNAL_PULLUPS_ENABLED false
+#endif
+
+static st_pod_runtime_t pod_runtime;
+static st_espidf_i2c_device_t sht41_i2c_device;
+static st_sht41_t sht41_sensor;
+static st_module_instance_t sht41_module;
+static bool pod_sensor_runtime_ready;
+#endif
 
 #if SITETWIN_GATEWAY_ROLE_BUILD
 static void gateway_uart_init(void)
@@ -296,44 +312,109 @@ static bool zigbee_signal_handler(const ezb_app_signal_t *signal)
 }
 
 #if !SITETWIN_GATEWAY_ROLE_BUILD
+static esp_err_t pod_sensor_runtime_init(void)
+{
+#if CONFIG_SITETWIN_SHT41_ENABLED
+    static const uint8_t registry_slots[ST_SHT41_CHANNEL_COUNT] = {0U, 1U};
+    const st_espidf_i2c_device_config_t i2c_config = {
+        .controller = CONFIG_SITETWIN_SHT41_I2C_CONTROLLER,
+        .sda_gpio = CONFIG_SITETWIN_SHT41_I2C_SDA_PIN,
+        .scl_gpio = CONFIG_SITETWIN_SHT41_I2C_SCL_PIN,
+        .address = CONFIG_SITETWIN_SHT41_I2C_ADDRESS,
+        .clock_hz = CONFIG_SITETWIN_SHT41_I2C_CLOCK_HZ,
+        .timeout_ms = CONFIG_SITETWIN_SHT41_I2C_TIMEOUT_MS,
+        .enable_internal_pullups = ST_SHT41_INTERNAL_PULLUPS_ENABLED,
+    };
+    st_sht41_config_t sensor_config;
+    esp_err_t result;
+
+    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "ENV_01", 1U);
+    result = st_espidf_i2c_device_init(&sht41_i2c_device, &i2c_config);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    memset(&sensor_config, 0, sizeof(sensor_config));
+    sensor_config.bus = st_espidf_i2c_bus(&sht41_i2c_device);
+    sensor_config.address = CONFIG_SITETWIN_SHT41_I2C_ADDRESS;
+    sensor_config.sample_interval_ms = CONFIG_SITETWIN_SHT41_SAMPLE_INTERVAL_MS;
+    sensor_config.cache_validity_ms = CONFIG_SITETWIN_SHT41_CACHE_VALIDITY_MS;
+    sensor_config.temperature_sensor_id = "sht41_temperature";
+    sensor_config.humidity_sensor_id = "sht41_humidity";
+    if (st_sht41_init(&sht41_sensor, &sensor_config) != 0 ||
+        st_module_instance_init(&sht41_module, st_sht41_module_driver(&sht41_sensor),
+                                ST_SHT41_CHANNEL_COUNT) != 0 ||
+        st_module_instance_attach(&sht41_module, &pod_runtime.registry, registry_slots,
+                                  ST_SHT41_CHANNEL_COUNT) != 0) {
+        st_espidf_i2c_device_deinit(&sht41_i2c_device);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "SHT41 runtime ready on I2C%d SDA GPIO%d SCL GPIO%d address 0x%02X",
+             CONFIG_SITETWIN_SHT41_I2C_CONTROLLER, CONFIG_SITETWIN_SHT41_I2C_SDA_PIN,
+             CONFIG_SITETWIN_SHT41_I2C_SCL_PIN, CONFIG_SITETWIN_SHT41_I2C_ADDRESS);
+    return ESP_OK;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+static uint8_t pod_sensor_slot(const st_telemetry_record_t *record)
+{
+    return record->reading.sensor_kind == ST_SENSOR_RELATIVE_HUMIDITY_PERCENT ? 1U : 0U;
+}
+
+static int pod_send_telemetry(const st_telemetry_record_t *record)
+{
+    uint8_t payload[ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE];
+    size_t payload_length;
+    ezb_zcl_custom_cluster_cmd_t command;
+
+    if (st_zigbee_telemetry_encode(record, pod_sensor_slot(record), payload,
+                                   sizeof(payload), &payload_length) != 0) {
+        return -1;
+    }
+
+    memset(&command, 0, sizeof(command));
+    command.cmd_ctrl.dst_addr = EZB_ADDRESS_SHORT(ST_GATEWAY_ADDRESS);
+    command.cmd_ctrl.dst_ep = ST_ZIGBEE_ENDPOINT;
+    command.cmd_ctrl.src_ep = ST_ZIGBEE_ENDPOINT;
+    command.cmd_ctrl.cluster_id = ST_ZIGBEE_CLUSTER_ID;
+    command.cmd_ctrl.fc.direction = EZB_ZCL_CMD_DIRECTION_TO_SRV;
+    command.cmd_ctrl.fc.dis_default_rsp = true;
+    command.cmd_id = ST_ZIGBEE_TELEMETRY_COMMAND;
+    command.data_length = (uint16_t)payload_length;
+    command.data = payload;
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    int result = ezb_zcl_custom_cluster_cmd_req(&command);
+    esp_zigbee_lock_release();
+    return result;
+}
+
 static void pod_telemetry_task(void *context)
 {
     (void)context;
     for (;;) {
-        uint8_t payload[ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE];
-        size_t payload_length;
-        st_telemetry_record_t record = {0};
+        uint64_t now_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-        if (pod_joined) {
-            record.record_class = ST_RECORD_HEALTH;
-            record.priority = ST_PRIORITY_HEALTH;
-            record.reading.sensor_kind = ST_SENSOR_UNKNOWN;
-            record.reading.unit = ST_UNIT_NONE;
-            record.reading.sequence = ++heartbeat_sequence;
-            record.reading.boot_id = 1U;
-            record.reading.uptime_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
-            record.reading.value = 1.0F;
-            record.reading.quality_flags = ST_QUALITY_VALID;
-            if (st_zigbee_telemetry_encode(&record, 0U, payload, sizeof(payload), &payload_length) == 0) {
-                ezb_zcl_custom_cluster_cmd_t command = {
-                    .cmd_ctrl = {
-                        .dst_addr = EZB_ADDRESS_SHORT(ST_GATEWAY_ADDRESS),
-                        .dst_ep = ST_ZIGBEE_ENDPOINT,
-                        .src_ep = ST_ZIGBEE_ENDPOINT,
-                        .cluster_id = ST_ZIGBEE_CLUSTER_ID,
-                        .fc = {.direction = EZB_ZCL_CMD_DIRECTION_TO_SRV, .dis_default_rsp = true},
-                    },
-                    .cmd_id = ST_ZIGBEE_TELEMETRY_COMMAND,
-                    .data_length = (uint16_t)payload_length,
-                    .data = payload,
-                };
-                esp_zigbee_lock_acquire(portMAX_DELAY);
-                ESP_LOGI(TAG, "Sending SiteTwin health sequence %lu", (unsigned long)record.reading.sequence);
-                (void)ezb_zcl_custom_cluster_cmd_req(&command);
-                esp_zigbee_lock_release();
+        if (pod_sensor_runtime_ready) {
+            st_telemetry_record_t record;
+
+            st_pod_runtime_tick(&pod_runtime, now_ms);
+            if (pod_joined) {
+                while (st_pod_runtime_next_telemetry(&pod_runtime, &record) == 0) {
+                    ESP_LOGI(TAG, "Sending %s sequence %lu quality 0x%08lX",
+                             record.reading.sensor_id,
+                             (unsigned long)record.reading.sequence,
+                             (unsigned long)record.reading.quality_flags);
+                    if (pod_send_telemetry(&record) != 0) {
+                        ESP_LOGW(TAG, "Zigbee send request failed for %s",
+                                 record.reading.sensor_id);
+                    }
+                }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(ST_HEARTBEAT_PERIOD_MS));
+        vTaskDelay(pdMS_TO_TICKS(50U));
     }
 }
 #endif
@@ -375,6 +456,10 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting SiteTwin gateway/coordinator image");
 #else
     ESP_LOGI(TAG, "Starting SiteTwin pod/end-device image");
+    pod_sensor_runtime_ready = pod_sensor_runtime_init() == ESP_OK;
+    if (!pod_sensor_runtime_ready) {
+        ESP_LOGE(TAG, "SHT41 sensor runtime initialization failed");
+    }
     ESP_ERROR_CHECK(xTaskCreate(pod_telemetry_task, "st_pod_tx", 4096, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);
 #endif
     ESP_ERROR_CHECK(xTaskCreate(zigbee_task, "st_zigbee", 6144, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);
