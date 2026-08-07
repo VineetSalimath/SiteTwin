@@ -14,6 +14,8 @@ int st_run_sensor_foundation_tests(void);
 
 int st_run_bh1750_tests(void);
 
+int st_run_reed_tests(void);
+
 #define EXPECT(condition)                                                                        \
     do {                                                                                         \
         if (!(condition)) {                                                                      \
@@ -689,6 +691,7 @@ int main(void)
     failures += test_gateway_registry_and_source_ingress();
     failures += st_run_sensor_foundation_tests();
     failures += st_run_bh1750_tests();
+    failures += st_run_reed_tests();
     failures += test_stress_runtime_and_gateway();
 
     if (failures != 0) {
