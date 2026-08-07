@@ -22,8 +22,10 @@ $sources = @(
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\logical_channel_adapter.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\module_instance.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\sht41.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\bh1750.c'),
     (Join-Path $projectRoot 'components\sitetwin_fake_hal\src\fake_sensor.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
+    (Join-Path $PSScriptRoot 'test_bh1750.c'),
     (Join-Path $PSScriptRoot 'test_runner.c')
 )
 
