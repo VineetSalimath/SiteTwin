@@ -78,13 +78,28 @@ def on_hivemq_message(client, userdata, msg):
             if field in payload:
                 telemetry[f"{sensor_id}_heartbeat_{field}"] = payload[field]
     else:
-        # Primary reading, plus previously-discarded metadata carried alongside it.
-        # Metadata is prefixed with sensor_id so multiple sensors on the same pod
-        # don't collide on keys like "sequence" or "quality_flags".
+        # Primary reading. sequence/uptime_ms/quality_flags change on every message
+        # (or every message that carries this sensor_id), so they stay in telemetry
+        # alongside the value -- they describe "this particular reading", not the
+        # device itself.
         telemetry = {sensor_id: value}
-        for field in ("sequence", "boot_id", "uptime_ms", "quality_flags"):
+        for field in ("sequence", "uptime_ms", "quality_flags"):
             if field in payload:
                 telemetry[f"{sensor_id}_{field}"] = payload[field]
+
+        # sensor_kind, unit, boot_id, and record_class describe the channel/device
+        # itself rather than a single reading -- they only change when hardware
+        # changes or the pod reboots, so they belong in attributes (latest-value
+        # snapshot), not telemetry (time-series history).
+        attributes = {}
+        for field in ("sensor_kind", "unit", "boot_id", "record_class"):
+            if field in payload:
+                attributes[f"{sensor_id}_{field}"] = payload[field]
+        if attributes:
+            try:
+                tb_gateway.gw_send_attributes(pod_id, attributes)
+            except Exception as exc:
+                log.error("Failed to forward attributes to ThingsBoard: %s", exc)
 
     try:
         tb_gateway.gw_send_telemetry(pod_id, telemetry)
