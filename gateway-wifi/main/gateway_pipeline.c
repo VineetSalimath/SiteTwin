@@ -1,11 +1,13 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/zigbee_payload.h"
 #include "gateway_pipeline.h"
 #include "mqtt_publish.h"
+#include "cJSON.h"
 
 static const char *TAG = "gw_pipeline";
 
@@ -173,4 +175,109 @@ int gateway_pipeline_send_heartbeat(void)
 uint32_t gateway_pipeline_sent_count(void)
 {
     return s_sent_count;
+}
+
+void gateway_pipeline_process_command(const char *topic, const char *payload)
+{
+    /* Extract pod_id from topic: "sitetwin/pods/{pod_id}/commands" */
+    char pod_id[ST_POD_ID_MAX_LEN] = {0};
+    const char *prefix = "sitetwin/pods/";
+    const char *p = strstr(topic, prefix);
+    if (p == NULL) {
+        ESP_LOGW(TAG, "Command on unexpected topic: %s", topic);
+        return;
+    }
+    p += strlen(prefix);
+    const char *slash = strchr(p, '/');
+    if (slash == NULL) {
+        ESP_LOGW(TAG, "Malformed command topic: %s", topic);
+        return;
+    }
+    size_t id_len = (size_t)(slash - p);
+    if (id_len >= sizeof(pod_id)) {
+        id_len = sizeof(pod_id) - 1;
+    }
+    memcpy(pod_id, p, id_len);
+    pod_id[id_len] = '\0';
+
+    cJSON *root = cJSON_Parse(payload);
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Failed to parse command JSON: %s", payload);
+        return;
+    }
+
+    cJSON *command_id_item = cJSON_GetObjectItem(root, "command_id");
+    cJSON *actuator_id_item = cJSON_GetObjectItem(root, "actuator_id");
+
+    if (!cJSON_IsNumber(command_id_item) || !cJSON_IsString(actuator_id_item)) {
+        ESP_LOGW(TAG, "Command missing command_id/actuator_id, ignoring: %s", payload);
+        cJSON_Delete(root);
+        return;
+    }
+
+    int command_id = command_id_item->valueint;
+    const char *actuator_id = actuator_id_item->valuestring;
+
+    ESP_LOGI(TAG, "Received command for pod=%s actuator=%s command_id=%d",
+             pod_id, actuator_id, command_id);
+
+    /* Validate command_type against our own defined set (set_state/set_value/
+     * pulse/custom -- see the downstream command design discussion). This is
+     * the one piece of `params` we DO understand and can meaningfully check,
+     * unlike actuator_id (we have no roster of real actuators to check
+     * against yet) or the rest of params (intentionally open-ended).
+     * An unrecognised command_type gets an honest "rejected" ack instead of
+     * being silently treated as "simulated success" -- claiming success on
+     * something we don't understand would misrepresent what happened. If
+     * command_type is absent entirely, we don't reject -- params is designed
+     * to be an open dict, not a strictly required schema at this stage. */
+    bool type_known = true;
+    char type_buf[32] = {0};
+    cJSON *params_item = cJSON_GetObjectItem(root, "params");
+    if (cJSON_IsObject(params_item)) {
+        cJSON *type_item = cJSON_GetObjectItem(params_item, "command_type");
+        if (cJSON_IsString(type_item)) {
+            strncpy(type_buf, type_item->valuestring, sizeof(type_buf) - 1);
+            if (strcmp(type_buf, "set_state") != 0 &&
+                strcmp(type_buf, "set_value") != 0 &&
+                strcmp(type_buf, "pulse") != 0 &&
+                strcmp(type_buf, "custom") != 0) {
+                type_known = false;
+            }
+        }
+    }
+
+    /* No real Zigbee downlink to the pod yet -- this branch is intentionally
+     * a stand-in. Once pod-side command delivery exists, this is where the
+     * command would be encoded (ST_GATEWAY_MESSAGE_COMMAND, already reserved
+     * in gateway_frame.h) and sent over UART instead of immediately faking
+     * a response here. */
+    char ack_json[320];
+    if (type_known) {
+        snprintf(ack_json, sizeof(ack_json),
+                 "{\"schema_version\":1,\"pod_id\":\"%s\",\"command_id\":%d,"
+                 "\"actuator_id\":\"%s\",\"status\":\"simulated\",\"executed_at_ms\":%llu}",
+                 pod_id, command_id, actuator_id,
+                 (unsigned long long)(esp_timer_get_time() / 1000));
+        ESP_LOGI(TAG, "Publishing simulated ack for command_id=%d", command_id);
+    } else {
+        snprintf(ack_json, sizeof(ack_json),
+                 "{\"schema_version\":1,\"pod_id\":\"%s\",\"command_id\":%d,"
+                 "\"actuator_id\":\"%s\",\"status\":\"rejected\","
+                 "\"reason\":\"unknown command_type: %s\",\"executed_at_ms\":%llu}",
+                 pod_id, command_id, actuator_id, type_buf,
+                 (unsigned long long)(esp_timer_get_time() / 1000));
+        ESP_LOGW(TAG, "Rejecting command_id=%d: unknown command_type '%s'", command_id, type_buf);
+    }
+
+    char ack_topic[96];
+    snprintf(ack_topic, sizeof(ack_topic), "sitetwin/pods/%s/command_acks", pod_id);
+
+    if (gw_mqtt_publish(ack_topic, ack_json) != 0) {
+        ESP_LOGW(TAG, "Failed to publish ack");
+    } else {
+        ESP_LOGI(TAG, "Published ack: %s", ack_json);
+    }
+
+    cJSON_Delete(root);
 }

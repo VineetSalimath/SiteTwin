@@ -24,7 +24,7 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
 - End-to-end delivery has been verified: locally-encoded test records (both routine
   readings and heartbeat records) travel from the Wi-Fi ESP through HiveMQ and the
   bridge script into ThingsBoard device entities, visible in the UI, with all metadata
-  fields intact (see "Known data loss" below — resolved).
+  fields intact (see "Attribute vs. telemetry split in bridge.py" below).
 - Both ESP-IDF projects consume the same canonical `components/sitetwin_core` component,
   preventing shared-contract drift between the Zigbee and Wi-Fi firmware.
 - `bridge.py` runs as a systemd service (`sitetwin-bridge.service`): starts on boot,
@@ -33,6 +33,13 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
   by the Zigbee coordinator, carried over UART1 (GPIO4 TX → GPIO5 RX, shared GND),
   CRC-validated by the Wi-Fi ESP, encoded as JSON, published to HiveMQ, and acknowledged
   by the broker.
+- ThingsBoard's built-in Device State (Active/Inactive) tracking works for
+  gateway-proxied sub-devices from telemetry alone — confirmed by observation in the
+  ThingsBoard UI before any `gw_connect_device` call existed in `bridge.py`. This
+  resolves the open question noted below under "Heartbeat / health record handling."
+  Note this is a *separate* mechanism from `gw_connect_device`, which is required
+  specifically for RPC/shared-attribute routing to a sub-device, not for inactivity
+  tracking — see "Bidirectional RPC" below.
 
 ## Confirmed but hardcoded for now
 
@@ -51,13 +58,24 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
   plaintext local files, not a secrets manager — acceptable for the current project
   stage but not production-grade.
 
-## Known data loss in the current pipeline
+## Attribute vs. telemetry split in bridge.py
 
-- **Resolved**: `bridge.py` previously forwarded only `pod_id`, `sensor_id`, and `value`
-  into ThingsBoard, discarding `sequence`, `boot_id`, `uptime_ms`, and `quality_flags`.
-  The bridge now forwards all of these, each prefixed with `sensor_id` (e.g.
-  `SLOT_0_quality_flags`, `SLOT_0_sequence`) to avoid key collisions if a pod reports
-  multiple sensors. Verified end to end.
+- **Resolved.** `bridge.py` classifies each field of the 11-field canonical payload
+  (`schema_version`, `pod_id`, `sensor_id`, `sensor_kind`, `record_class`, `sequence`,
+  `boot_id`, `uptime_ms`, `value`, `unit`, `quality_flags`) into either ThingsBoard
+  telemetry (time-series, keeps history) or attributes (latest-value snapshot, no
+  history), based on whether the field changes on every reading or only when the
+  physical hardware/reboot state changes:
+  - **Telemetry** (per-reading, changes every message): `value` (under the bare
+    `sensor_id` key), `sequence`, `uptime_ms`, `quality_flags` -- each prefixed with
+    `sensor_id` (e.g. `SLOT_0_quality_flags`) to avoid key collisions across
+    multiple sensors on one pod.
+  - **Attributes** (static/slow-changing, sent via `gw_send_attributes`):
+    `sensor_kind`, `unit`, `boot_id`, `record_class` -- also prefixed with
+    `sensor_id`.
+- Verified end to end against a live ThingsBoard instance (manual HiveMQ publish →
+  bridge.py → confirmed correct split in the ThingsBoard Attributes and Telemetry
+  tabs).
 - **Still open**: `st_gateway_telemetry_to_json` (shared firmware code, not modified on
   this board) omits the `priority` field. Downstream consumers still cannot distinguish
   routine state from event- or health-priority records. Requires a shared-code change;
@@ -99,17 +117,33 @@ This board's test data source (`gateway_pipeline.c`) matches: `TEST_POD_ID`/
 `TEST_SENSOR_ID` default to `POD_1234`/`SLOT_0`. Verified end to end — ThingsBoard
 correctly auto-creates a `POD_1234` device with a `SLOT_0` telemetry key.
 
-### Heartbeat / health record handling — Resolved
+### Heartbeat / health record handling — Resolved, with an unresolved discrepancy
 
 Pod health frames (`record_class = HEALTH`, `sensor_kind = UNKNOWN`, `value = 1.0`) are
 sent by the Zigbee-side pod image every 15 seconds as a bring-up signal, and this
 board's test data source can synthesize the same shape via the `send_heartbeat` console
 command.
 
+> **Flagging, not resolving**: a code review of `components/sitetwin_core/src/pod_runtime.c`
+> (the shared record-generation logic) did not find any code path that actually sets
+> `record_class = ST_RECORD_HEALTH` — only EVENT/FEATURE/STATE assignments were found.
+> This directly conflicts with the claim above ("sent... every 15 seconds"). This may mean
+> the periodic health frame lives somewhere not yet reviewed (e.g. Zigbee-side pod firmware
+> outside `sitetwin_core`), or the claim predates the current pod_runtime.c implementation
+> and is stale. Needs a direct check with the Zigbee/pod firmware owner before relying on
+> "pods already send heartbeats" as a fact anywhere downstream.
+>
+> Separately: `gateway-wifi/main/gateway_pipeline.c` has a `gateway_pipeline_send_heartbeat()`
+> function producing a valid HEALTH record, but it is currently only reachable via manual
+> console command (mirroring `gateway_pipeline_send_test_record`) — not called
+> automatically/periodically anywhere on this board.
+
 `bridge.py` detects `record_class == "health"` and forwards it as
 `{sensor_id}_heartbeat: true` (plus `_sequence`, `_boot_id`, `_uptime_ms`) instead of
 treating it as an ordinary sensor reading — this avoids a misleading telemetry point
-named after an "unknown" sensor kind with a meaningless numeric value.
+named after an "unknown" sensor kind with a meaningless numeric value. **This bridge.py
+path has only been tested with hand-published mock messages, not real pod-originated
+heartbeats**, given the discrepancy noted above.
 
 Note on why this exists: ThingsBoard's built-in device connectivity/inactivity tracking
 does **not** require a dedicated heartbeat key — any telemetry message from a device
@@ -120,10 +154,13 @@ dedicated heartbeat key exists purely for dashboard readability — so a human l
 device history sees a clearly-labeled liveness signal instead of a stray reading mixed
 into a real sensor's data — not because the platform requires it for offline detection.
 This distinction is worth remembering before adding more bridge-side "liveness" logic
-that the platform may already provide natively. Not independently verified yet: how
-ThingsBoard's native inactivity tracking behaves specifically for devices connected
-through the gateway API (as opposed to devices with their own direct MQTT session) —
-worth checking in the ThingsBoard UI before relying on it.
+that the platform may already provide natively.
+~~Not independently verified yet: how ThingsBoard's native inactivity tracking behaves
+specifically for devices connected through the gateway API~~ **Resolved**: confirmed by
+observation — `POD_TEST`'s Active/Inactive status in the ThingsBoard device list updated
+correctly from telemetry alone, well before any `gw_connect_device` call existed in the
+codebase. Device State tracking and `gw_connect_device`-gated RPC routing are
+independent mechanisms; see "Bidirectional RPC" below for the latter.
 
 ## Test data source module (implemented)
 
@@ -210,6 +247,97 @@ acknowledged by the MQTT broker.
 - The physical UART transport is validated, but malformed-frame coverage, truncated-frame
   recovery, and sustained-operation behaviour still need explicit tests.
 
+## Bidirectional RPC / downstream command path
+
+This is new since the sections above were first written. The goal is not to control a
+real actuator (none is planned for this project) but to demonstrate that the platform
+architecture supports closed-loop control end to end, with the final hop (gateway → pod
+over Zigbee) simulated rather than real, since no downlink exists on the Zigbee side yet.
+
+### Design
+
+Downstream commands follow the same "generic contract, not hardware-specific" design
+as the upstream telemetry schema (`sensor_id`/`sensor_kind` → `actuator_id`/
+`command_type`):
+
+- **Command** (bridge.py → HiveMQ `sitetwin/pods/{pod_id}/commands`):
+  `{schema_version, pod_id, command_id, actuator_id, params, issued_at_ms}`.
+  `command_type` (one of `set_state` / `set_value` / `pulse` / `custom`) lives inside
+  the open `params` dict, not as a top-level field — this keeps the envelope stable
+  regardless of what a given actuator needs.
+- **Command ack** (C6 → HiveMQ `sitetwin/pods/{pod_id}/command_acks`):
+  `{schema_version, pod_id, command_id, actuator_id, status, executed_at_ms}`, plus
+  `reason` when `status == "rejected"`. `status` is one of `simulated` (structurally
+  valid, `command_type` recognised or absent) or `rejected` (`command_type` present
+  but not one of the four known values). There is currently no way to validate
+  `actuator_id` itself — no roster of real actuators per pod exists to check against.
+
+### Confirmed (real, tested end to end against live ThingsBoard + HiveMQ)
+
+- `bridge.py` registers a server-side RPC handler via
+  `tb_gateway.gw_set_server_side_rpc_request_handler`. The actual callback signature
+  the library invokes is `(gateway, content)` — two positional args — not the
+  `(request_id, device_name, request_body)` shown in some SDK README examples;
+  confirmed by reading `tb_gateway_mqtt.py` source directly.
+- **Critical prerequisite, easy to miss:** ThingsBoard does not route RPC requests
+  (or shared attribute updates) to a gateway-proxied sub-device until the gateway
+  explicitly calls `gw_connect_device(pod_id)` for it at least once. Just sending
+  telemetry/attributes for a `pod_id` is not sufficient — RPC requests to a pod that
+  has never been `gw_connect_device`'d will time out silently with no error on either
+  side. `bridge.py` now calls this on first sight of each `pod_id` (tracked in an
+  in-memory `connected_devices` set, which naturally resets and re-triggers on
+  restart). This is unrelated to Device State/inactivity tracking, which already
+  works without it — see the resolved open question under "Heartbeat / health record
+  handling" above.
+- `bridge.py` translates the incoming ThingsBoard RPC (`method`/`params`) into the
+  command schema above (`method` → `actuator_id`; `issued_at_ms` stamped locally,
+  since RPC requests don't carry a timestamp) and publishes it to HiveMQ.
+- `bridge.py` subscribes to `sitetwin/pods/+/command_acks` and, on receiving an ack,
+  calls `gw_send_rpc_reply(pod_id, command_id, payload)` — this is the only point
+  where the original ThingsBoard RPC request is answered. It is intentionally NOT
+  answered immediately on receipt of the RPC request; doing so would misrepresent an
+  unactioned request as completed.
+- Verified with real messages at each hop: ThingsBoard RPC debug terminal → bridge.py
+  log → HiveMQ console (commands topic) → hand-published mock ack → bridge.py log
+  (`Closed RPC loop: ...`) → confirmed `gw_send_rpc_reply` call succeeds without error.
+  **Not verified within ThingsBoard's RPC timeout window** — the mock ack was
+  published well after the original request had already timed out on the TB side, so
+  the full loop (TB UI showing a real response, not a timeout) has not been observed;
+  this requires C6 responding within the timeout, which needs real hardware.
+
+### Confirmed but simulated / not yet on real hardware
+
+- C6-side code (`gateway-wifi/main/gateway_pipeline.c`, `gateway-wifi.c`,
+  `mqtt_publish.h`, `CMakeLists.txt`) subscribes to `sitetwin/pods/+/commands`,
+  parses the incoming JSON (new dependency: ESP-IDF's built-in `json`/cJSON
+  component, not previously used in this codebase, which otherwise hand-builds JSON
+  via `snprintf`), validates `command_type` if present, and publishes a
+  `command_ack`. **Compiles successfully (`idf.py build`, two rounds, no errors)**
+  but has never been flashed to or run on real C6 hardware — written without
+  hardware access. Known unverified assumptions:
+  - `esp_mqtt_event_handle_t` field names (`topic`, `topic_len`, `data`, `data_len`)
+    used in the `MQTT_EVENT_DATA` handler.
+  - Single-chunk assumption for `MQTT_EVENT_DATA` — no reassembly logic for
+    messages split across multiple event firings, since our payloads are small.
+  - cJSON API usage (`cJSON_Parse`, `cJSON_GetObjectItem`, `cJSON_IsNumber`/
+    `cJSON_IsString`, `.valueint`/`.valuestring`).
+- The command is never actually forwarded over UART/Zigbee to a real pod. The reserved
+  `ST_GATEWAY_MESSAGE_COMMAND` message type in `gateway_frame.h` is not used —
+  `gateway_pipeline_process_command()` fabricates the ack directly, with `status`
+  values chosen to be honest about this (`simulated`, never a bare `success`).
+- No Zigbee-side downlink (gateway → pod) exists at all. This is out of scope for
+  this bring-up and belongs to the Zigbee firmware owner if ever pursued.
+
+### Not done
+
+- No actual actuator, real or otherwise, is connected or planned for this project —
+  this whole path exists to demonstrate closed-loop capability, not to control
+  anything physical.
+- `actuator_id` validation against a real per-pod actuator roster (no such roster
+  exists).
+- End-to-end verification within ThingsBoard's RPC timeout window, which requires
+  real C6 hardware.
+
 ## Repository layout
 
 ```
@@ -219,9 +347,9 @@ SiteTwin/
 ├── gateway-wifi/           (this board's ESP-IDF project — Wi-Fi ESP firmware)
 │   └── main/
 │       ├── gateway-wifi.c          (Wi-Fi/MQTT/console/UART init, app_main) [core]
-│       ├── mqtt_publish.h          (MQTT publish/status interface)          [core]
+│       ├── mqtt_publish.h          (MQTT publish/subscribe/status interface) [core]
 │       ├── uart_link.c/.h          (UART receive/parse/publish path)        [core]
-│       ├── gateway_pipeline.c/.h   (ingest pipeline + test record generation) [mixed: pipeline=core, record gen=test]
+│       ├── gateway_pipeline.c/.h   (ingest pipeline + downstream command handling + test record generation) [mixed: pipeline/commands=core, record gen=test]
 │       ├── test_loop.c/.h          (periodic auto-send via esp_timer)       [test only]
 │       ├── console_commands.c/.h   (interactive gw> prompt commands)        [test only, except `status`]
 │       └── wifi_config.h           (credentials, gitignored)
@@ -235,15 +363,17 @@ SiteTwin/
 `[core]` = needed regardless of test vs. real UART input. `[test only]` = built to
 support development/validation and expected to be replaced or removed once real UART
 input is wired in. `gateway_pipeline.c` is split: its pipeline-invocation logic
-(encode → ingest → JSON → publish) is reused by the eventual real UART path; its
-test-record construction is not.
+(encode → ingest → JSON → publish) and its downstream command handling are reused by
+the eventual real UART path; its test-record construction is not.
 
 ## Immediate next steps
 
 1. **Blocked, pending Zigbee-side owner**: confirm UART payload contents. Separately,
    confirm baud rate and TX/RX pin assignment (does not require design discussion).
 2. ~~Design and implement the switchable test data-source module~~ **Done.**
-3. ~~Design the heartbeat/health record representation in `bridge.py`~~ **Done.**
+3. ~~Design the heartbeat/health record representation in `bridge.py`~~ **Done**, but
+   see the flagged discrepancy under "Heartbeat / health record handling" — needs a
+   real-pod-originated test, not just mock messages.
 4. ~~Harden `bridge.py`~~ **Done**: systemd service, HiveMQ reconnect, ThingsBoard
    connect retry, persistent logging.
 5. ~~Decide whether to carry `quality_flags`/`sequence`/`boot_id` into ThingsBoard~~
@@ -253,3 +383,10 @@ test-record construction is not.
 7. Before relying on the UART link for real integration: physical loopback or real
    two-board test (not yet performed), and the untested edge cases listed under
    "UART link" above.
+8. **New**: flash and test the downstream command/ack path (`gateway_pipeline_process_command`)
+   on real C6 hardware — verify the `MQTT_EVENT_DATA` field-name and single-chunk
+   assumptions, and confirm the full RPC loop (ThingsBoard → bridge.py → HiveMQ → C6 →
+   HiveMQ → bridge.py → ThingsBoard) completes within ThingsBoard's RPC timeout window.
+9. **New**: resolve the health-frame discrepancy — confirm with the Zigbee/pod firmware
+   owner whether pods actually emit periodic `ST_RECORD_HEALTH` frames, since
+   `pod_runtime.c` review found no code path that sets this record class.

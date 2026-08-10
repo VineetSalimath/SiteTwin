@@ -79,6 +79,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected to HiveMQ");
         s_mqtt_connected = true;
+        /* Subscribe to downstream commands for all pods. Wildcard '+' mirrors
+         * the pattern bridge.py uses for the upstream telemetry topic. */
+        esp_mqtt_client_subscribe(s_mqtt_client, "sitetwin/pods/+/commands", 1);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "MQTT disconnected");
@@ -86,6 +89,31 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT publish acknowledged, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_SUBSCRIBED:
+        ESP_LOGI(TAG, "MQTT subscribe acknowledged, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_DATA:
+        /* NOTE: event->topic and event->data are NOT null-terminated, and for
+         * messages larger than the internal buffer this event can fire
+         * multiple times per message (chunked). Our command payloads are
+         * small (well under default buffer size), so we assume a single
+         * chunk here -- this assumption should be verified once real
+         * hardware is available; if it doesn't hold, this needs reassembly
+         * logic using event->current_data_offset / event->total_data_len. */
+        {
+            char topic_buf[96];
+            char data_buf[512];
+            size_t topic_len = (size_t)event->topic_len < sizeof(topic_buf) - 1
+                                    ? (size_t)event->topic_len : sizeof(topic_buf) - 1;
+            size_t data_len = (size_t)event->data_len < sizeof(data_buf) - 1
+                                   ? (size_t)event->data_len : sizeof(data_buf) - 1;
+            memcpy(topic_buf, event->topic, topic_len);
+            topic_buf[topic_len] = '\0';
+            memcpy(data_buf, event->data, data_len);
+            data_buf[data_len] = '\0';
+            gateway_pipeline_process_command(topic_buf, data_buf);
+        }
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT error event");
@@ -120,6 +148,15 @@ int gw_mqtt_publish(const char *topic, const char *payload)
         return -1;
     }
     int msg_id = esp_mqtt_client_publish(s_mqtt_client, topic, payload, 0, 1, 0);
+    return msg_id >= 0 ? 0 : -1;
+}
+
+int gw_mqtt_subscribe(const char *topic)
+{
+    if (!s_mqtt_connected || s_mqtt_client == NULL) {
+        return -1;
+    }
+    int msg_id = esp_mqtt_client_subscribe(s_mqtt_client, topic, 1);
     return msg_id >= 0 ? 0 : -1;
 }
 
