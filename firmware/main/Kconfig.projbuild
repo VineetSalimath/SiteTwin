@@ -9,6 +9,11 @@ config SITETWIN_GATEWAY_UART_TX_PIN
     int "Gateway-to-Wi-Fi UART TX GPIO"
     default 4
 
+config SITETWIN_GATEWAY_UART_RX_PIN
+    int "Wi-Fi-to-gateway UART RX GPIO"
+    range 0 30
+    default 5
+
 config SITETWIN_GATEWAY_UART_BAUD_RATE
     int "Gateway-to-Wi-Fi UART baud rate"
     default 115200
@@ -128,5 +133,20 @@ config SITETWIN_SGP40_COMPENSATION_MAXIMUM_AGE_MS
     range 250 30000
     default 2000
     depends on SITETWIN_SGP40_ENABLED
+
+config SITETWIN_ENVIRONMENT_ALERT_LED_GPIO
+    int "Environment Pod CO2 alarm LED GPIO"
+    range 0 30
+    default 4
+
+config SITETWIN_ENVIRONMENT_ALERT_BUZZER_GPIO
+    int "Environment Pod passive buzzer PWM GPIO"
+    range 0 30
+    default 5
+
+config SITETWIN_ENVIRONMENT_ALERT_BUZZER_HZ
+    int "Environment Pod passive buzzer frequency"
+    range 100 5000
+    default 1000
 
 endmenu

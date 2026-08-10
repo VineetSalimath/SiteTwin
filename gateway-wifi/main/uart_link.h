@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sitetwin/gateway_frame.h"
+
 /* Initializes the UART peripheral and starts the background receive task.
  *
  * UART1 receives the matching Zigbee gateway's default GPIO4 TX on GPIO5 at
@@ -18,5 +20,8 @@ void uart_link_init(void);
  * command).
  */
 void uart_link_feed_test_bytes(const uint8_t *data, size_t length);
+
+int uart_link_send_frame(const st_gateway_frame_header_t *header,
+                         const uint8_t *payload);
 
 #endif

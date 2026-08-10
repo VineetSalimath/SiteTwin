@@ -8,6 +8,7 @@ $sensorsInclude = Join-Path $repositoryRoot 'components\sitetwin_sensors\include
 $fakeInclude = Join-Path $projectRoot 'components\sitetwin_fake_hal\include'
 $outputPath = Join-Path $env:TEMP 'sitetwin-host-tests.exe'
 $sources = @(
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\command.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\contracts.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_frame.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_json.c'),
@@ -29,6 +30,7 @@ $sources = @(
     (Join-Path $projectRoot 'components\sitetwin_fake_hal\src\fake_sensor.c'),
     (Join-Path $PSScriptRoot 'test_scd41.c'),
     (Join-Path $PSScriptRoot 'test_sgp40.c'),
+    (Join-Path $PSScriptRoot 'test_command_actuation.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
     (Join-Path $PSScriptRoot 'test_runner.c')
 )

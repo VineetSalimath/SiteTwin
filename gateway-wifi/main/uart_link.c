@@ -5,6 +5,7 @@
 #include "esp_log.h"
 
 #include "sitetwin/gateway_frame.h"
+#include "sitetwin/command.h"
 #include "gateway_pipeline.h"
 #include "uart_link.h"
 
@@ -18,10 +19,9 @@ static const char *TAG = "uart_link";
 #define UART_LINK_RXD_PIN      5
 #define UART_LINK_RX_BUF_SIZE  1024
 
-/* Frame reassembly buffer. Sized generously above the largest frame
- * currently expected (16-byte header + 30-byte Zigbee payload + 2-byte
- * CRC = 48 bytes), to tolerate a payload format larger than the current
- * assumption without needing a code change here. */
+/* Frame reassembly buffer. Sized above the largest current frame
+ * (16-byte header + 64-byte command payload + 2-byte CRC = 82 bytes),
+ * with headroom for future contract growth. */
 #define PARSE_BUFFER_SIZE 256
 
 static uint8_t s_parse_buffer[PARSE_BUFFER_SIZE];
@@ -98,6 +98,21 @@ static void uart_link_append_bytes(const uint8_t *data, size_t length)
 void uart_link_feed_test_bytes(const uint8_t *data, size_t length)
 {
     uart_link_append_bytes(data, length);
+}
+
+int uart_link_send_frame(const st_gateway_frame_header_t *header,
+                         const uint8_t *payload)
+{
+    uint8_t frame[ST_GATEWAY_FRAME_HEADER_SIZE + ST_COMMAND_WIRE_SIZE +
+                  ST_GATEWAY_FRAME_CRC_SIZE];
+    size_t frame_length;
+    int written;
+    if (st_gateway_frame_encode(header, payload, frame, sizeof(frame),
+                                &frame_length) != 0) {
+        return -1;
+    }
+    written = uart_write_bytes(UART_LINK_PORT, frame, frame_length);
+    return written == (int)frame_length ? 0 : -1;
 }
 
 static void uart_link_rx_task(void *arg)

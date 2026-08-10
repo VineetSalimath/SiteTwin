@@ -12,7 +12,8 @@
 typedef enum {
     ST_GATEWAY_MESSAGE_TELEMETRY = 1,
     ST_GATEWAY_MESSAGE_HEALTH = 2,
-    ST_GATEWAY_MESSAGE_COMMAND = 3
+    ST_GATEWAY_MESSAGE_COMMAND = 3,
+    ST_GATEWAY_MESSAGE_COMMAND_ACK = 4
 } st_gateway_message_type_t;
 
 typedef struct {
