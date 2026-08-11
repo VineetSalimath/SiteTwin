@@ -554,7 +554,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     st_bh1750_config_t sensor_config;
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_ACTIVITY_ACCESS, "ACT_01", 2U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_ACTIVITY_ACCESS, "POD_2", 2U);
     result = st_espidf_i2c_master_bus_init(&activity_i2c_bus, &bus_config);
     if (result != ESP_OK) {
         return result;
@@ -608,7 +608,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     st_adxl345_config_t adxl_config;
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_EQUIPMENT, "EQP_01", 3U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_EQUIPMENT, "POD_3", 3U);
     result = st_espidf_i2c_master_bus_init(&equipment_i2c_bus, &bus_config);
     if (result != ESP_OK) {
         return result;
@@ -679,7 +679,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     st_sht41_config_t sensor_config;
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "ENV_01", 1U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "POD_1", 1U);
     result = st_espidf_i2c_device_init(&sht41_i2c_device, &i2c_config);
     if (result != ESP_OK) {
         return result;

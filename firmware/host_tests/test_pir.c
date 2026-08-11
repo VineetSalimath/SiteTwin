@@ -62,7 +62,7 @@ static int test_pir_active_low_and_runtime_event(void)
     EXPECT(st_pir_init(&sensor, &config, 0U) == 0);
     EXPECT(st_pir_process_level(&sensor, 0U, 1U, &event) == 0);
     EXPECT(st_pir_process_level(&sensor, 1U, 0U, &event) == 1);
-    st_pod_runtime_init(&runtime, ST_POD_ACTIVITY_ACCESS, "ACT_01", 7U);
+    st_pod_runtime_init(&runtime, ST_POD_ACTIVITY_ACCESS, "POD_2", 7U);
     EXPECT(st_pod_runtime_emit_event(&runtime, config.sensor_id, ST_SENSOR_MOTION,
                                      event.detected_at_ms, 1.0F) == 0);
     EXPECT(st_pod_runtime_next_telemetry(&runtime, &record) == 0);

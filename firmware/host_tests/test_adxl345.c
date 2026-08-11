@@ -123,7 +123,7 @@ static int fixture_init(adxl345_fixture_t *fixture, fake_adxl345_bus_t *bus)
     config.minimum_window_samples = 8U;
     config.sample_interval_ms = 5000U;
     config.vibration_sensor_id = "adxl345_vibration_rms";
-    st_pod_runtime_init(&fixture->runtime, ST_POD_EQUIPMENT, "EQP_01", 9U);
+    st_pod_runtime_init(&fixture->runtime, ST_POD_EQUIPMENT, "POD_3", 9U);
     if (st_adxl345_init(&fixture->sensor, &config) != 0 ||
         st_module_instance_init(&fixture->module,
                                 st_adxl345_module_driver(&fixture->sensor),

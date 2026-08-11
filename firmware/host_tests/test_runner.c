@@ -38,7 +38,7 @@ static st_telemetry_record_t make_state_record(const char *sensor_id, uint32_t s
     memset(&record, 0, sizeof(record));
     record.record_class = ST_RECORD_STATE;
     record.priority = ST_PRIORITY_ROUTINE;
-    strcpy(record.reading.pod_id, "ENV_01");
+    strcpy(record.reading.pod_id, "POD_1");
     strcpy(record.reading.sensor_id, sensor_id);
     record.reading.sequence = sequence;
     record.reading.sensor_kind = ST_SENSOR_TEMPERATURE_C;
@@ -152,7 +152,7 @@ static int test_registry_warmup_and_hot_swap(void)
     st_fake_sensor_t sensor;
     st_telemetry_record_t record;
 
-    st_pod_runtime_init(&runtime, ST_POD_ENVIRONMENT, "ENV_01", 42U);
+    st_pod_runtime_init(&runtime, ST_POD_ENVIRONMENT, "POD_1", 42U);
     st_fake_sensor_init(&sensor, "sht41_temperature", "module-001", ST_SENSOR_TEMPERATURE_C,
                         ST_UNIT_CELSIUS, 1U, 20.0F);
     sensor.warm_until_ms = 500U;
@@ -246,7 +246,7 @@ static int test_gateway_json_contract(void)
     record.reading.value = 21.5F;
     EXPECT(st_gateway_telemetry_to_json(&record, json, sizeof(json)) == 0);
     EXPECT(strcmp(json,
-                  "{\"schema_version\":1,\"pod_id\":\"ENV_01\",\"sensor_id\":\"sht41_temperature\","
+                  "{\"schema_version\":1,\"pod_id\":\"POD_1\",\"sensor_id\":\"sht41_temperature\","
                   "\"sensor_kind\":\"temperature_c\",\"record_class\":\"state\",\"sequence\":7,"
                   "\"boot_id\":42,\"uptime_ms\":1234,\"value\":21.500,\"unit\":\"celsius\","
                   "\"quality_flags\":1}") == 0);
@@ -264,7 +264,7 @@ static int test_pod_reporting_policy(void)
         .maximum_interval_ms = 5000U,
     };
 
-    st_pod_runtime_init(&runtime, ST_POD_ENVIRONMENT, "ENV_01", 42U);
+    st_pod_runtime_init(&runtime, ST_POD_ENVIRONMENT, "POD_1", 42U);
     EXPECT(st_reporting_policy_set_rule(&runtime.reporting, ST_SENSOR_TEMPERATURE_C, rule) == 0);
     st_fake_sensor_init(&sensor, "env_temperature", "module-temp-001",
                         ST_SENSOR_TEMPERATURE_C, ST_UNIT_CELSIUS, 1000U, 20.0F);
@@ -352,7 +352,7 @@ static int test_zigbee_payload_round_trip(void)
     EXPECT(st_zigbee_telemetry_encode(&input, 3U, payload, sizeof(payload),
                                       &payload_length) == 0);
     EXPECT(payload_length == ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE);
-    EXPECT(st_zigbee_telemetry_decode(payload, payload_length, "ENV_01", "env_temperature",
+    EXPECT(st_zigbee_telemetry_decode(payload, payload_length, "POD_1", "env_temperature",
                                       &output, &sensor_slot) == 0);
     EXPECT(sensor_slot == 3U);
     EXPECT(output.record_class == input.record_class);
@@ -364,13 +364,13 @@ static int test_zigbee_payload_round_trip(void)
     EXPECT(output.reading.uptime_ms == input.reading.uptime_ms);
     EXPECT(output.reading.value == input.reading.value);
     EXPECT(output.reading.quality_flags == input.reading.quality_flags);
-    EXPECT(strcmp(output.reading.pod_id, "ENV_01") == 0);
+    EXPECT(strcmp(output.reading.pod_id, "POD_1") == 0);
     EXPECT(strcmp(output.reading.sensor_id, "env_temperature") == 0);
 
-    EXPECT(st_zigbee_telemetry_decode(payload, payload_length - 1U, "ENV_01",
+    EXPECT(st_zigbee_telemetry_decode(payload, payload_length - 1U, "POD_1",
                                       "env_temperature", &output, &sensor_slot) != 0);
     payload[0] = ST_ZIGBEE_PAYLOAD_VERSION + 1U;
-    EXPECT(st_zigbee_telemetry_decode(payload, payload_length, "ENV_01", "env_temperature",
+    EXPECT(st_zigbee_telemetry_decode(payload, payload_length, "POD_1", "env_temperature",
                                       &output, &sensor_slot) != 0);
     return 0;
 }
@@ -396,9 +396,9 @@ static int test_gateway_runtime_pipeline(void)
     st_gateway_runtime_init(&runtime);
     EXPECT(st_zigbee_telemetry_encode(&state, 0U, payload, sizeof(payload),
                                       &payload_length) == 0);
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ENV_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_1",
                                             "env_temperature") == ST_GATEWAY_INGRESS_ACCEPTED);
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ENV_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_1",
                                             "env_temperature") == ST_GATEWAY_INGRESS_DUPLICATE);
 
     state.reading.sequence = 2U;
@@ -406,19 +406,19 @@ static int test_gateway_runtime_pipeline(void)
     state.reading.value = 21.0F;
     EXPECT(st_zigbee_telemetry_encode(&state, 0U, payload, sizeof(payload),
                                       &payload_length) == 0);
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ENV_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_1",
                                             "env_temperature") == ST_GATEWAY_INGRESS_ACCEPTED);
     EXPECT(st_gateway_runtime_pending(&runtime) == 1U);
 
     state.reading.sequence = 1U;
     EXPECT(st_zigbee_telemetry_encode(&state, 0U, payload, sizeof(payload),
                                       &payload_length) == 0);
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ENV_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_1",
                                             "env_temperature") == ST_GATEWAY_INGRESS_STALE);
 
     EXPECT(st_zigbee_telemetry_encode(&event, 1U, payload, sizeof(payload),
                                       &payload_length) == 0);
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ACT_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_2",
                                             "door_contact") == ST_GATEWAY_INGRESS_ACCEPTED);
     EXPECT(st_gateway_runtime_pending(&runtime) == 2U);
     EXPECT(st_gateway_runtime_next_json(&runtime, json, sizeof(json)) == 0);
@@ -430,7 +430,7 @@ static int test_gateway_runtime_pipeline(void)
     EXPECT(output.reading.value == 21.0F);
 
     payload[0] = ST_ZIGBEE_PAYLOAD_VERSION + 1U;
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ACT_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_2",
                                             "door_contact") == ST_GATEWAY_INGRESS_INVALID);
 
     st_gateway_runtime_init(&runtime);
@@ -440,13 +440,13 @@ static int test_gateway_runtime_pipeline(void)
         event.reading.uptime_ms = index;
         EXPECT(st_zigbee_telemetry_encode(&event, 1U, payload, sizeof(payload),
                                           &payload_length) == 0);
-        EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ACT_01",
+        EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_2",
                                                 "door_contact") == ST_GATEWAY_INGRESS_ACCEPTED);
     }
     event.reading.sequence = ST_GATEWAY_DELIVERY_CAPACITY + 1U;
     EXPECT(st_zigbee_telemetry_encode(&event, 1U, payload, sizeof(payload),
                                       &payload_length) == 0);
-    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "ACT_01",
+    EXPECT(st_gateway_runtime_ingest_zigbee(&runtime, payload, payload_length, "POD_2",
                                             "door_contact") == ST_GATEWAY_INGRESS_DROPPED);
     EXPECT(st_gateway_runtime_pending(&runtime) == ST_GATEWAY_DELIVERY_CAPACITY);
     EXPECT(runtime.delivery_drops == 1U);
@@ -468,7 +468,7 @@ static int test_gateway_registry_and_source_ingress(void)
     st_gateway_runtime_init(&runtime);
 
     EXPECT(st_gateway_registry_register_node(&runtime.registry, 0x1234U, ieee_address,
-                                             "ENV_01") == 0);
+                                             "POD_1") == 0);
     EXPECT(st_gateway_registry_bind_sensor(&runtime.registry, 0x1234U, 0U,
                                            "env_temperature") == 0);
     EXPECT(st_zigbee_telemetry_encode(&state, 0U, payload, sizeof(payload),
@@ -481,7 +481,7 @@ static int test_gateway_registry_and_source_ingress(void)
            ST_GATEWAY_INGRESS_DUPLICATE);
 
     EXPECT(st_gateway_registry_register_node(&runtime.registry, 0x2345U, ieee_address,
-                                             "ENV_01") == 0);
+                                             "POD_1") == 0);
     EXPECT(st_gateway_runtime_ingest_zigbee_source(&runtime, 0x1234U, payload,
                                                    payload_length) ==
            ST_GATEWAY_INGRESS_INVALID);
@@ -496,7 +496,7 @@ static int test_gateway_registry_and_source_ingress(void)
                                              ieee_address + 1U, "ENV_02") != 0);
     EXPECT(st_gateway_runtime_next_record(&runtime, &output) == 0);
     EXPECT(output.reading.sequence == 2U);
-    EXPECT(strcmp(output.reading.pod_id, "ENV_01") == 0);
+    EXPECT(strcmp(output.reading.pod_id, "POD_1") == 0);
     EXPECT(strcmp(output.reading.sensor_id, "env_temperature") == 0);
     return 0;
 }
@@ -528,7 +528,7 @@ static int test_stress_runtime_and_gateway(void)
 
     printf("Running stress harness...\n");
 
-    st_pod_runtime_init(&runtime, ST_POD_ENVIRONMENT, "ENV_01", 99U);
+    st_pod_runtime_init(&runtime, ST_POD_ENVIRONMENT, "POD_1", 99U);
 
     st_fake_sensor_init(&temperature_sensor, "env_temperature", "module-temp-001",
                         ST_SENSOR_TEMPERATURE_C, ST_UNIT_CELSIUS, 250U, 20.0F);
