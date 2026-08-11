@@ -70,4 +70,152 @@ config SITETWIN_SHT41_CACHE_VALIDITY_MS
     default 250
     depends on SITETWIN_SHT41_ENABLED
 
+menu "Activity/Access Pod prototype wiring"
+
+config SITETWIN_ACTIVITY_I2C_CONTROLLER
+    int "Activity Pod I2C controller"
+    range 0 1
+    default 0
+
+config SITETWIN_ACTIVITY_I2C_SDA_PIN
+    int "Activity Pod I2C SDA GPIO"
+    range 0 30
+    default 6
+
+config SITETWIN_ACTIVITY_I2C_SCL_PIN
+    int "Activity Pod I2C SCL GPIO"
+    range 0 30
+    default 7
+
+config SITETWIN_ACTIVITY_I2C_CLOCK_HZ
+    int "Activity Pod I2C clock frequency"
+    range 10000 1000000
+    default 100000
+
+config SITETWIN_ACTIVITY_I2C_TIMEOUT_MS
+    int "Activity Pod I2C transaction timeout"
+    range 10 5000
+    default 100
+
+config SITETWIN_ACTIVITY_I2C_INTERNAL_PULLUPS
+    bool "Enable ESP32-C6 internal Activity Pod I2C pull-ups"
+    default n
+
+config SITETWIN_BH1750_I2C_ADDRESS
+    hex "BH1750 7-bit I2C address"
+    range 0x08 0x77
+    default 0x23
+
+config SITETWIN_BH1750_SAMPLE_INTERVAL_MS
+    int "BH1750 physical sampling interval"
+    range 250 3600000
+    default 1000
+
+config SITETWIN_ACTIVITY_PIR_GPIO
+    int "SR505 PIR GPIO"
+    range 0 30
+    default 1
+
+config SITETWIN_ACTIVITY_PIR_ACTIVE_HIGH
+    bool "SR505 PIR output is active high"
+    default y
+
+config SITETWIN_ACTIVITY_PIR_STABILIZATION_MS
+    int "PIR startup stabilization period"
+    range 0 60000
+    default 5000
+
+config SITETWIN_ACTIVITY_PIR_RETRIGGER_MS
+    int "PIR duplicate-event suppression period"
+    range 0 60000
+    default 1000
+
+config SITETWIN_ACTIVITY_REED_GPIO
+    int "Reed switch GPIO"
+    range 0 30
+    default 0
+
+config SITETWIN_ACTIVITY_REED_OPEN_HIGH
+    bool "Reed switch open state reads high"
+    default y
+
+config SITETWIN_ACTIVITY_REED_INTERNAL_PULLUP
+    bool "Enable ESP32-C6 internal reed-switch pull-up"
+    default y
+
+config SITETWIN_ACTIVITY_REED_DEBOUNCE_MS
+    int "Reed switch debounce interval"
+    range 1 1000
+    default 30
+
+endmenu
+
+menu "Equipment Pod prototype wiring"
+
+config SITETWIN_EQUIPMENT_I2C_CONTROLLER
+    int "Equipment Pod I2C controller"
+    range 0 1
+    default 0
+
+config SITETWIN_EQUIPMENT_I2C_SDA_PIN
+    int "Equipment Pod I2C SDA GPIO"
+    range 0 30
+    default 6
+
+config SITETWIN_EQUIPMENT_I2C_SCL_PIN
+    int "Equipment Pod I2C SCL GPIO"
+    range 0 30
+    default 7
+
+config SITETWIN_EQUIPMENT_I2C_CLOCK_HZ
+    int "Equipment Pod I2C clock frequency"
+    range 10000 1000000
+    default 100000
+
+config SITETWIN_EQUIPMENT_I2C_TIMEOUT_MS
+    int "Equipment Pod I2C transaction timeout"
+    range 10 5000
+    default 100
+
+config SITETWIN_EQUIPMENT_I2C_INTERNAL_PULLUPS
+    bool "Enable ESP32-C6 internal Equipment Pod I2C pull-ups"
+    default n
+
+config SITETWIN_INA219_I2C_ADDRESS
+    hex "INA219 7-bit I2C address"
+    range 0x08 0x77
+    default 0x40
+
+config SITETWIN_INA219_SHUNT_MILLIOHMS
+    int "INA219 breakout shunt resistance (milliohms)"
+    range 1 10000
+    default 100
+
+config SITETWIN_INA219_MAX_CURRENT_MA
+    int "INA219 maximum expected current (mA)"
+    range 1 32000
+    default 3200
+
+config SITETWIN_INA219_SAMPLE_INTERVAL_MS
+    int "INA219 physical sampling interval"
+    range 250 3600000
+    default 1000
+
+config SITETWIN_ADXL345_I2C_ADDRESS
+    hex "ADXL345 7-bit I2C address"
+    range 0x08 0x77
+    default 0x53
+
+config SITETWIN_ADXL345_SAMPLE_INTERVAL_MS
+    int "ADXL345 RMS window interval"
+    range 100 3600000
+    default 5000
+
+config SITETWIN_ADXL345_MINIMUM_WINDOW_SAMPLES
+    int "ADXL345 minimum FIFO samples per RMS window"
+    range 2 31
+    default 16
+
+endmenu
+
 endmenu

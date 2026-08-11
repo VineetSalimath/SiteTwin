@@ -25,16 +25,20 @@ $sources = @(
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\bh1750.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\reed.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\ina219.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\pir.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\adxl345.c'),
     (Join-Path $projectRoot 'components\sitetwin_fake_hal\src\fake_sensor.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
     (Join-Path $PSScriptRoot 'test_bh1750.c'),
     (Join-Path $PSScriptRoot 'test_reed.c'),
     (Join-Path $PSScriptRoot 'test_ina219.c'),
+    (Join-Path $PSScriptRoot 'test_pir.c'),
+    (Join-Path $PSScriptRoot 'test_adxl345.c'),
     (Join-Path $PSScriptRoot 'test_runner.c')
 )
 
 & gcc -std=c11 -Wall -Wextra -Werror -I $coreInclude -I $sensorRuntimeInclude `
-    -I $sensorsInclude -I $fakeInclude $sources -o $outputPath
+    -I $sensorsInclude -I $fakeInclude $sources -o $outputPath -lm
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
