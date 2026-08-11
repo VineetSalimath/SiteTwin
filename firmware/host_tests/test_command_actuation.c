@@ -44,7 +44,7 @@ static st_command_t make_command(uint64_t id, st_command_type_t type,
     st_command_t command;
     memset(&command, 0, sizeof(command));
     command.command_id = id;
-    strcpy(command.target_pod_id, "ENV_01");
+    strcpy(command.target_pod_id, "POD_1");
     command.command_type = type;
     command.target = target;
     command.issued_at_ms = 1000U;
@@ -98,7 +98,7 @@ static int test_command_and_ack_codecs(void)
 
     memset(&ack_input, 0, sizeof(ack_input));
     ack_input.command_id = input.command_id;
-    strcpy(ack_input.pod_id, "ENV_01");
+    strcpy(ack_input.pod_id, "POD_1");
     ack_input.status = ST_COMMAND_STATUS_EXECUTED;
     ack_input.reason = ST_COMMAND_REASON_NONE;
     ack_input.applied_config_revision = 2U;
@@ -130,7 +130,7 @@ static int test_capabilities_validation_and_idempotency(void)
     st_command_t command = make_command(1U, ST_COMMAND_SET_THRESHOLD,
                                         ST_COMMAND_TARGET_CO2_THRESHOLD);
 
-    EXPECT(st_command_runtime_init(&runtime, ST_POD_ENVIRONMENT, "ENV_01", persistence) == 0);
+    EXPECT(st_command_runtime_init(&runtime, ST_POD_ENVIRONMENT, "POD_1", persistence) == 0);
     EXPECT(runtime.persistent.config.co2_threshold_ppm == 1000.0F);
     command.value = 1200.0F;
     command.config_revision = 2U;
@@ -145,7 +145,7 @@ static int test_capabilities_validation_and_idempotency(void)
     EXPECT(runtime.persistent.config.co2_threshold_ppm == 1200.0F);
     EXPECT(fake.saves == 1);
 
-    EXPECT(st_command_runtime_init(&restored, ST_POD_ENVIRONMENT, "ENV_01", persistence) == 0);
+    EXPECT(st_command_runtime_init(&restored, ST_POD_ENVIRONMENT, "POD_1", persistence) == 0);
     EXPECT(restored.persistent.config.co2_threshold_ppm == 1200.0F);
     EXPECT(st_command_runtime_handle(&restored, &command, 2200U, &ack) == 0);
     EXPECT(ack.status == ST_COMMAND_STATUS_DUPLICATE);
@@ -171,17 +171,17 @@ static int test_capabilities_validation_and_idempotency(void)
     EXPECT(ack.status == ST_COMMAND_STATUS_EXPIRED);
 
     command = make_command(5U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_LED);
-    strcpy(command.target_pod_id, "ACT_01");
+    strcpy(command.target_pod_id, "POD_2");
     command.duration_ms = 1000U;
     EXPECT(st_command_runtime_handle(&runtime, &command, 2500U, &ack) == 0);
     EXPECT(ack.reason == ST_COMMAND_REASON_WRONG_TARGET);
 
     EXPECT(st_pod_capabilities(ST_POD_ACTIVITY_ACCESS).pending_hardware_verification == 1U);
     EXPECT(st_pod_capabilities(ST_POD_ACTIVITY_ACCESS).command_mask == 0U);
-    EXPECT(st_command_runtime_init(&restored, ST_POD_ACTIVITY_ACCESS, "ACT_01",
+    EXPECT(st_command_runtime_init(&restored, ST_POD_ACTIVITY_ACCESS, "POD_2",
                                    (st_command_persistence_t){0}) == 0);
     command = make_command(6U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_LED);
-    strcpy(command.target_pod_id, "ACT_01");
+    strcpy(command.target_pod_id, "POD_2");
     command.duration_ms = 1000U;
     EXPECT(st_command_runtime_handle(&restored, &command, 2500U, &ack) == 0);
     EXPECT(ack.status == ST_COMMAND_STATUS_REJECTED);
@@ -197,7 +197,7 @@ static int test_alarm_silence_and_bounded_output(void)
     st_command_t command;
     st_local_actuation_state_t output;
 
-    EXPECT(st_command_runtime_init(&runtime, ST_POD_ENVIRONMENT, "ENV_01", persistence) == 0);
+    EXPECT(st_command_runtime_init(&runtime, ST_POD_ENVIRONMENT, "POD_1", persistence) == 0);
     st_command_runtime_observe_co2(&runtime, 1500.0F, ST_QUALITY_WARMING_UP);
     output = st_command_runtime_tick(&runtime, 2000U);
     EXPECT(output.led_active == 0U);

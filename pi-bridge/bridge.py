@@ -26,7 +26,7 @@ SUPPORTED_TARGETS = {
     "test_output": {"led", "buzzer", "alarm"},
     "get_config": {"config"},
 }
-ENVIRONMENT_POD_ID = "ENV_01"
+ENVIRONMENT_POD_ID = "POD_1"
 MAX_JSON_INTEGER = (1 << 53) - 1
 
 logging.basicConfig(

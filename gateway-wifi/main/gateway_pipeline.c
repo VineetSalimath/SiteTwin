@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "sitetwin/command.h"
+#include "sitetwin/gateway_identity.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/zigbee_payload.h"
 #include "gateway_pipeline.h"
@@ -21,7 +22,6 @@ static uint32_t s_sent_count = 0;
 #define TEST_SENSOR_SLOT    0U
 #define TEST_POD_ID         "POD_1234"
 #define TEST_SENSOR_ID      "SLOT_0"
-#define ENVIRONMENT_POD_ID  "ENV_01"
 
 static int publish_command_ack(const st_command_ack_t *ack)
 {
@@ -70,6 +70,7 @@ int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
     char pod_id[ST_POD_ID_MAX_LEN];
     char sensor_id[ST_SENSOR_ID_MAX_LEN];
     uint8_t sensor_slot;
+    st_telemetry_record_t decoded_record;
     st_gateway_ingress_result_t result;
 
     if (header == NULL || payload == NULL || header->version != ST_GATEWAY_FRAME_VERSION) {
@@ -87,17 +88,20 @@ int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
         (header->message_type != ST_GATEWAY_MESSAGE_TELEMETRY &&
          header->message_type != ST_GATEWAY_MESSAGE_HEALTH) ||
         header->payload_length != ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE ||
-        st_zigbee_telemetry_sensor_slot(payload, header->payload_length, &sensor_slot) != 0) {
+        st_zigbee_telemetry_decode(payload, header->payload_length,
+                                   "unresolved", "unresolved",
+                                   &decoded_record, &sensor_slot) != 0) {
         ESP_LOGW(TAG, "Rejected unsupported UART frame");
         return -1;
     }
 
-    if (sensor_slot <= 3U) {
-        snprintf(pod_id, sizeof(pod_id), "%s", ENVIRONMENT_POD_ID);
-    } else {
-        snprintf(pod_id, sizeof(pod_id), "POD_%04X", header->source_address);
+    if (st_gateway_identity_resolve(header->source_address, sensor_slot,
+                                    decoded_record.reading.sensor_kind,
+                                    pod_id, sizeof(pod_id),
+                                    sensor_id, sizeof(sensor_id)) != 0) {
+        ESP_LOGW(TAG, "Failed to resolve UART telemetry identity");
+        return -1;
     }
-    snprintf(sensor_id, sizeof(sensor_id), "SLOT_%u", (unsigned int)sensor_slot);
     result = st_gateway_runtime_ingest_zigbee(&s_runtime, payload, header->payload_length,
                                               pod_id, sensor_id);
     if (result != ST_GATEWAY_INGRESS_ACCEPTED) {
@@ -182,7 +186,8 @@ int gateway_pipeline_submit_command(const char *topic, const char *json)
     strcpy(command.target_pod_id, item->valuestring);
     snprintf(expected_topic, sizeof(expected_topic), "sitetwin/pods/%s/commands",
              command.target_pod_id);
-    if (strcmp(topic, expected_topic) != 0 || strcmp(command.target_pod_id, ENVIRONMENT_POD_ID) != 0) {
+    if (strcmp(topic, expected_topic) != 0 ||
+        strcmp(command.target_pod_id, ST_POD_1_ID) != 0) {
         goto done;
     }
     item = cJSON_GetObjectItemCaseSensitive(root, "command_type");

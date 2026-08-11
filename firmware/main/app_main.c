@@ -17,6 +17,7 @@
 #include "sitetwin/espidf_actuation.h"
 #include "sitetwin/espidf_i2c_bus.h"
 #include "sitetwin/gateway_frame.h"
+#include "sitetwin/gateway_identity.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/module_instance.h"
 #include "sitetwin/pod_runtime.h"
@@ -141,7 +142,7 @@ static int gateway_send_command_downlink(const uint8_t *payload, uint16_t payloa
     ezb_zcl_custom_cluster_cmd_t command;
     int result;
     if (st_command_decode(payload, payload_length, &decoded) != 0 ||
-        strcmp(decoded.target_pod_id, "ENV_01") != 0 ||
+        strcmp(decoded.target_pod_id, ST_POD_1_ID) != 0 ||
         environment_pod_short_address == 0xFFFFU) {
         return -1;
     }
@@ -266,6 +267,7 @@ static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *heade
     st_gateway_ingress_result_t result;
 #if SITETWIN_GATEWAY_ROLE_BUILD
     st_telemetry_record_t record;
+    st_telemetry_record_t unresolved_record;
 #endif
 
     if (header == NULL || payload == NULL ||
@@ -273,18 +275,26 @@ static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *heade
         EZB_ZCL_CMD_FC_IS_TO_CLI_DIRECTION(header->fc) ||
         header->cmd_id != ST_ZIGBEE_TELEMETRY_COMMAND ||
         payload_length != ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE ||
-        st_zigbee_telemetry_sensor_slot(payload, payload_length, &sensor_slot) != 0) {
+        st_zigbee_telemetry_decode(payload, payload_length,
+                                   "unresolved", "unresolved",
+                                   &unresolved_record, &sensor_slot) != 0) {
         return EZB_ZCL_STATUS_INVALID_FIELD;
     }
 
-    snprintf(pod_id, sizeof(pod_id), "POD_%04X", header->src_addr.u.short_addr);
-    snprintf(sensor_id, sizeof(sensor_id), "SLOT_%u", (unsigned int)sensor_slot);
+    if (st_gateway_identity_resolve(header->src_addr.u.short_addr, sensor_slot,
+                                    unresolved_record.reading.sensor_kind,
+                                    pod_id, sizeof(pod_id),
+                                    sensor_id, sizeof(sensor_id)) != 0) {
+        return EZB_ZCL_STATUS_INVALID_FIELD;
+    }
     result = st_gateway_runtime_ingest_zigbee(&gateway_runtime, payload, payload_length,
                                               pod_id, sensor_id);
     ESP_LOGI(TAG, "Telemetry from %s/%s: ingress result %d", pod_id, sensor_id, (int)result);
 #if SITETWIN_GATEWAY_ROLE_BUILD
     if (result == ST_GATEWAY_INGRESS_ACCEPTED) {
-        environment_pod_short_address = header->src_addr.u.short_addr;
+        if (strcmp(pod_id, ST_POD_1_ID) == 0) {
+            environment_pod_short_address = header->src_addr.u.short_addr;
+        }
         int decode_result = st_zigbee_telemetry_decode(payload, payload_length, pod_id, sensor_id,
                                                        &record, &sensor_slot);
         if (decode_result == 0) {
@@ -318,7 +328,9 @@ static ezb_zcl_status_t gateway_command_ack_handler(const ezb_zcl_cmd_hdr_t *hea
         st_command_ack_decode(payload, payload_length, &ack) != 0) {
         return EZB_ZCL_STATUS_INVALID_FIELD;
     }
-    environment_pod_short_address = header->src_addr.u.short_addr;
+    if (strcmp(ack.pod_id, ST_POD_1_ID) == 0) {
+        environment_pod_short_address = header->src_addr.u.short_addr;
+    }
     if (gateway_uart_forward(ST_GATEWAY_MESSAGE_COMMAND_ACK,
                              header->src_addr.u.short_addr, payload, payload_length,
                              0U, (uint32_t)ack.command_id) != 0) {
@@ -356,7 +368,7 @@ static ezb_zcl_status_t pod_command_handler(const ezb_zcl_cmd_hdr_t *header,
         st_command_ack_t ack;
         memset(&ack, 0, sizeof(ack));
         ack.command_id = queued.command.command_id;
-        strcpy(ack.pod_id, "ENV_01");
+        strcpy(ack.pod_id, ST_POD_1_ID);
         ack.status = ST_COMMAND_STATUS_FAILED;
         ack.reason = ST_COMMAND_REASON_QUEUE_FULL;
         if (pod_control_runtime_ready) {
@@ -574,8 +586,8 @@ static esp_err_t pod_sensor_runtime_init(void)
     };
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "ENV_01", 1U);
-    if (st_command_runtime_init(&command_runtime, ST_POD_ENVIRONMENT, "ENV_01",
+    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, ST_POD_1_ID, 1U);
+    if (st_command_runtime_init(&command_runtime, ST_POD_ENVIRONMENT, ST_POD_1_ID,
                                 st_espidf_command_persistence()) != 0) {
         return ESP_FAIL;
     }
@@ -767,8 +779,8 @@ static esp_err_t pod_sensor_runtime_init(void)
 #endif
     return ESP_OK;
 #else
-    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "ENV_01", 1U);
-    if (st_command_runtime_init(&command_runtime, ST_POD_ENVIRONMENT, "ENV_01",
+    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, ST_POD_1_ID, 1U);
+    if (st_command_runtime_init(&command_runtime, ST_POD_ENVIRONMENT, ST_POD_1_ID,
                                 st_espidf_command_persistence()) == 0 &&
         st_espidf_actuation_init(&actuation_service,
                                  CONFIG_SITETWIN_ENVIRONMENT_ALERT_LED_GPIO,
