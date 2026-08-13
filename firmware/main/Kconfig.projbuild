@@ -216,6 +216,28 @@ config SITETWIN_ADXL345_MINIMUM_WINDOW_SAMPLES
     range 2 31
     default 16
 
+config SITETWIN_DS18B20_GPIO
+    int "DS18B20 1-Wire data GPIO"
+    range 0 30
+    default 0
+
+config SITETWIN_DS18B20_INTERNAL_PULLUP
+    bool "Enable ESP32-C6 internal DS18B20 pull-up"
+    default y
+    help
+        This is only supplementary. Fit an external 4.7 kohm pull-up from
+        DQ to 3.3 V for the waterproof three-wire probe.
+
+config SITETWIN_DS18B20_RESOLUTION_BITS
+    int "DS18B20 conversion resolution"
+    range 9 12
+    default 12
+
+config SITETWIN_DS18B20_SAMPLE_INTERVAL_MS
+    int "DS18B20 physical sampling interval"
+    range 1000 3600000
+    default 1000
+
 endmenu
 
 endmenu

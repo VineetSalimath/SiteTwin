@@ -27,6 +27,7 @@ $sources = @(
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\ina219.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\pir.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\adxl345.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\ds18b20.c'),
     (Join-Path $projectRoot 'components\sitetwin_fake_hal\src\fake_sensor.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
     (Join-Path $PSScriptRoot 'test_bh1750.c'),
@@ -34,6 +35,7 @@ $sources = @(
     (Join-Path $PSScriptRoot 'test_ina219.c'),
     (Join-Path $PSScriptRoot 'test_pir.c'),
     (Join-Path $PSScriptRoot 'test_adxl345.c'),
+    (Join-Path $PSScriptRoot 'test_ds18b20.c'),
     (Join-Path $PSScriptRoot 'test_runner.c')
 )
 

@@ -1,8 +1,8 @@
 ---
 title: SiteTwin Sensor Logic Report Notes
 project: SiteTwin
-status: Working report note; update after ADXL345 physical verification
-date: 2026-08-11
+status: Working report note; all current fixed-pod sensor paths physically verified
+date: 2026-08-13
 tags:
   - sitetwin
   - firmware
@@ -16,8 +16,9 @@ tags:
 This note records the logic currently used for every SiteTwin sensor, including
 the relationship between the original Arduino prototypes and the production
 ESP-IDF drivers. It deliberately distinguishes software completion from
-physical validation. The measurements from the current ADXL345 test must be
-added before this material is treated as final report evidence.
+physical validation. The ADXL345 end-to-end path is now verified, but a full
+mounted baseline/threshold dataset is still required before this material is
+treated as final vibration-threshold evidence.
 
 ## System-wide sensor pipeline
 
@@ -54,9 +55,9 @@ missing or invalid measurements with zero.
 | Activity / Pod 2 | BH1750 | Illuminance | Yicheng's production driver, reused in the composed Activity image | Pod 2 reported physically complete; logs/results to consolidate later |
 | Activity / Pod 2 | Reed switch | Contact open/closed events | Yicheng's production state machine, reused in the Activity image | Pod 2 reported physically complete; logs/results to consolidate later |
 | Activity / Pod 2 | SR505 PIR | Motion-start events | Vineet-owned production state machine and ESP-IDF composition | Pod 2 reported physically complete; logs/results to consolidate later |
-| Equipment / Pod 3 | INA219 | Bus voltage and current | Yicheng's production driver, reused in the composed Equipment image | Host-tested and target-compiled; Pod 3 physical verification pending/current |
-| Equipment / Pod 3 | ADXL345 | Vibration RMS in g | Vineet-owned production driver and feature extraction | Host-tested and target-compiled; physical verification in progress |
-| Equipment / Pod 3 | DS18B20 | Surface temperature | Arduino prototype only | Production driver not implemented; must not be described as complete |
+| Equipment / Pod 3 | INA219 | Bus voltage and current | Yicheng's production driver, reused in the composed Equipment image | Physically verified through Zigbee, UART, MQTT, and ThingsBoard |
+| Equipment / Pod 3 | ADXL345 | Vibration RMS in g | Vineet-owned production driver and feature extraction | Physically verified through Zigbee, UART, MQTT, and ThingsBoard; full mounted threshold dataset still pending |
+| Equipment / Pod 3 | DS18B20 | Surface temperature | Portable production driver plus ESP-IDF RMT 1-Wire HAL | Host-tested, target-compiled, and physically verified end to end on 2026-08-13 |
 
 ## Environment Pod sensor logic
 
@@ -315,17 +316,51 @@ or induced-vibration measurements gathered during physical validation.
 
 ### DS18B20 surface temperature
 
-The DS18B20 currently exists only in `Pod_3.ino`. The prototype discovers the
-first device on the 1-Wire bus, selects 12-bit resolution, requests a blocking
-temperature conversion, reads device index 0, and treats
-`DEVICE_DISCONNECTED_C` as removal. It contributes to a prototype local alarm
-above `31 degrees C`.
+The production DS18B20 driver is portable and talks through
+`st_onewire_bus_t`; the ESP32-C6 adapter uses Espressif's RMT-backed 1-Wire
+component. The current prototype assumes one externally powered three-wire
+probe on GPIO0. It reads and CRC-validates the 64-bit ROM, requires family code
+`0x28`, and derives a stable module UID from that ROM.
 
-None of that is yet a production SiteTwin driver. Production work still needs a
-portable 1-Wire HAL, ROM-addressed device identity, non-blocking conversion,
-scratchpad CRC validation, explicit powered/parasite-mode policy, and registry
-integration. Until then, DS18B20 must be described as prototyped rather than
-implemented.
+The driver writes the selected 9-to-12-bit resolution and then uses a
+non-blocking state machine: reset/presence, `Skip ROM`, `Convert T`, wait for the
+resolution-specific conversion duration, then reset, `Read Scratchpad`, and
+decode. Conversion bounds are 94, 188, 375, and 750 ms for 9, 10, 11, and
+12 bits respectively. The Equipment image uses 12-bit resolution and a
+1-second physical sampling interval.
+
+Scratchpad byte 8 must match the Dallas/Maxim CRC-8 over bytes 0-to-7
+(reflected polynomial `0x8C`). The signed 16-bit temperature word is divided by
+16, preserving negative values, and must fall within `-55..125 degrees C`.
+The canonical output is `POD_3/ds18b20_temperature`, state class, degrees
+Celsius, on slot 3.
+
+On a CRC or transport failure the driver can report the last valid value as
+`STALE` with the relevant fault quality. Missing-presence responses produce
+`SENSOR_MISSING`, and repeated failures return the module to probing so a
+removed/reconnected probe can recover. Host tests cover CRC vectors, negative
+temperature, every conversion duration, non-blocking behaviour, stale fallback,
+and removal/reattachment. The ESP32-C6 Equipment image builds successfully.
+Physical validation of the powered waterproof probe passed on 2026-08-13 using
+GPIO0 and an external approximately 4.7 kΩ pull-up from DQ to 3.3 V. Valid
+temperature readings responded to physical temperature change and reached the
+canonical gateway/server path as `POD_3/ds18b20_temperature`.
+
+## DS18B20 physical verification record
+
+- Date: 2026-08-13.
+- Pod: `POD_3` Equipment profile on ESP32-C6.
+- Connection: three-wire externally powered probe; VCC 3.3 V, GND common,
+  DQ GPIO0, external approximately 4.7 kΩ DQ-to-3.3 V pull-up.
+- Firmware result: the production driver detected the probe and emitted valid
+  `temperature_c` state records in Celsius.
+- Response test: temperature changed in the expected direction when the probe
+  was warmed and returned toward ambient afterward.
+- Transport result: canonical `POD_3/ds18b20_temperature` telemetry completed
+  the Zigbee, UART, MQTT, and server path.
+- Limitation: exact min/mean/max temperature values were not retained in this
+  note; this record establishes functional physical validation, not a calibrated
+  accuracy experiment.
 
 ## Shared quality and failure behaviour
 
@@ -346,16 +381,18 @@ Failure values are never fabricated as zero. Drivers reprobe after loss or
 repeated failures, while the registry prevents conflicting failure flags from
 being presented as an ordinary valid observation.
 
-## ADXL345 physical verification record (pending)
+## ADXL345 physical verification record
 
-Complete this section from the serial monitor and gateway output before the
-report documentation sweep.
+The first end-to-end verification was completed on 2026-08-11. The retained
+gateway log proves a valid stationary feature reached the Wi-Fi gateway and was
+acknowledged by MQTT. A longer controlled dataset is still required for a
+defensible application threshold.
 
 ### Test configuration
 
-- Date/time:
-- ESP32-C6 / pod identifier:
-- Firmware commit:
+- Date/time: 2026-08-11
+- ESP32-C6 / pod identifier: `POD_3`, observed Zigbee short address `0x304E`
+- Firmware commit: `56764e1` plus the working Equipment image under test
 - ADXL345 breakout and address strap:
 - Supply voltage:
 - Mounting position and attachment method:
@@ -366,25 +403,26 @@ report documentation sweep.
 
 | Condition | Window count | RMS minimum (g) | RMS mean (g) | RMS maximum (g) | Samples/window | Quality flags |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Sensor stationary on bench |  |  |  |  |  |  |
+| Sensor stationary on bench | At least 2 retained records | 0.004 | 0.004 | 0.004 | At least 16 by driver acceptance rule | `VALID` (`1`) |
 | Sensor mounted, equipment off |  |  |  |  |  |  |
 | Equipment normal operation |  |  |  |  |  |  |
 | Controlled tap/shake |  |  |  |  |  |  |
 
 ### Acceptance evidence
 
-- Device ID `0xE5` successfully detected: pending.
-- Repeated windows contain at least 16 samples: pending.
-- Mounted idle RMS is stable enough to establish a baseline: pending.
-- Controlled vibration produces a repeatable increase above idle: pending.
-- No unexpected `CLIPPED` flag during normal operation: pending.
-- Slot 2 telemetry reaches the Zigbee gateway: pending.
+- Device ID `0xE5` successfully detected: passed indirectly; the production driver cannot enter normal sampling without it.
+- Repeated windows contain at least 16 samples: passed indirectly; the driver retries rather than emitting below this bound.
+- Mounted idle RMS is stable enough to establish a baseline: not yet measured as a controlled dataset.
+- Controlled vibration produces a repeatable increase above idle: qualitatively exercised, but exact values were not retained in the evidence log.
+- No unexpected `CLIPPED` flag during observed stationary operation: passed (`quality_flags=1`).
+- Slot 2 telemetry reaches Zigbee, UART, and MQTT: passed; canonical record was `POD_3/adxl345_vibration` and MQTT acknowledgements were observed.
 - Proposed operational/fault threshold and justification: pending measured data.
 
 ## Documentation sweep after ADXL345 verification
 
-After the measured table and acceptance evidence above are complete, reconcile
-the results across the repository's Markdown documentation. At minimum, update:
+The first reconciliation was performed on 2026-08-11. The following documents
+must continue to distinguish end-to-end transport verification from the still
+incomplete controlled vibration threshold experiment:
 
 - `firmware/README.md`
 - `INTEGRATION_VALIDATION.md`

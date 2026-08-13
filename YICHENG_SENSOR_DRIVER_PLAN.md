@@ -3,17 +3,12 @@
 Owner: Yicheng (wanglrebe)
 Scope: BH1750, PIR, Reed/contact switch, DS18B20, INA219
 Pods: Activity/Access Pod (BH1750 + PIR + Reed), Equipment Pod slow path (DS18B20 + INA219)
-Status: **BH1750, Reed, and INA219 implemented** — host-tested and
-target-compiled on ESP32-C6. See per-sensor "Status" notes in Section 2 for
-implementation details and bugs found/fixed along the way. **PIR and
-DS18B20 not started**, both still blocked:
-- PIR: physical module confirmation incomplete (voltage confirmed 3.3V;
-  polarity/retrigger/on-board controls still open — Section 2.2/3).
-- DS18B20: whether the `st_onewire_bus_t` HAL proposal requirement
-  (Section 5) still applies, or is covered by "do what you can," is an open
-  question — nothing in Vineet's subsequent `feature/environment-pod-sensors`
-  work (SCD41/SGP40, both I2C) touched 1-Wire, so there is no new precedent
-  either way.
+Status: **all five planned sensor paths are now implemented.** Yicheng's
+BH1750, Reed, and INA219 drivers were reused; Vineet completed the PIR
+composition/state machine and the DS18B20 production path. Activity Pod
+hardware validation is complete. INA219 and ADXL345 have been exercised end to
+end on Pod 3. DS18B20 is host-tested, target-compiled, and physically verified
+with the powered waterproof probe on 2026-08-13.
 Depends on: `feature/sensor-runtime-foundation` at commit `38082d5bc481810d01d213f9fef02d2acffd2341` — pushed 2026-08-06, reviewed at this exact SHA.
 This revision (v2) incorporates the actual foundation implementation. Sections
 previously marked **[PENDING FOUNDATION]** have been updated below; one item
@@ -116,6 +111,11 @@ registry-polled channel) this implementation follows.
 
 ### 2.4 DS18B20 (surface temperature)
 
+**Status: implemented on `feature/vineet-pir-adxl345-sensors`.** The portable
+driver, `st_onewire_bus_t` boundary, ESP-IDF RMT adapter, Equipment Pod slot-3
+composition, and host tests are present. The ESP32-C6 Equipment target build
+passes. Physical waterproof-probe validation passed on 2026-08-13.
+
 | Field | Detail |
 |---|---|
 | Prototype behaviour | `DallasTemperature.requestTemperatures()` — **blocking**, stalls the calling task for up to 750 ms (12-bit default resolution) each read. `DEVICE_DISCONNECTED_C` is the only failure case handled. |
@@ -124,7 +124,7 @@ registry-polled channel) this implementation follows.
 | Acquisition style | Scheduled, non-blocking, asynchronous conversion. Must not hold a shared I2C mutex — this driver uses 1-Wire, not I2C, so no cross-interference with INA219 acquisition on that basis, but must still not block the task the ADXL345 fast path depends on. |
 | Reporting class | `ST_RECORD_STATE` / `ST_PRIORITY_ROUTINE` for normal readings; fault-state transitions (CRC failure, disconnected sensor) report immediately regardless of routine suppression. |
 | Open hardware questions | Probe is an unbranded waterproof three-wire module (red/black/yellow), no vendor datasheet. Confirmed three-wire (non-parasite) by physical inspection of the connector. Not yet confirmed whether the DQ line pull-up resistor (~4.7 kΩ per datasheet reference circuit) is present on the probe's own small board or needs to be added externally. |
-| Planned tests | Scratchpad CRC validation (known-good and deliberately corrupted vectors); negative-temperature decoding; conversion timing per resolution; disconnected-sensor detection; retry behaviour; removal/reattachment. |
+| Tests | Host tests pass for known-good and deliberately corrupted scratchpad CRC, negative-temperature decoding, all resolution timings, non-blocking conversion, disconnected-sensor handling, stale fallback, retry, and removal/reattachment. Physical GPIO0 probe validation passed on 2026-08-13. |
 
 ### 2.5 INA219 (bus voltage / current)
 
@@ -219,7 +219,7 @@ components/sitetwin_sensors/
     ├── bh1750.c             — st_i2c_bus_t-based, single-channel adapter
     ├── pir.c                — pure debounce/confirmation state machine (Section 6), no adapter
     ├── reed.c                — pure debounce/confirmation state machine (Section 6), no adapter, implemented
-    ├── ds18b20.c              — 1-Wire (no shared HAL component yet, see below)
+    ├── ds18b20.c              — portable non-blocking 1-Wire driver
     └── ina219.c              — st_i2c_bus_t-based, TWO-channel module_instance
 
 firmware/main/
@@ -229,25 +229,19 @@ firmware/main/
                                    not inside these drivers)
 ```
 
-DS18B20 is 1-Wire, not I2C, so it does not fit `sitetwin_espidf_hal`'s
-`st_i2c_bus_t` abstraction. **Revised per review:** rather than the portable
-DS18B20 driver calling ESP-IDF RMT/GPIO functions directly, propose a small
-`st_onewire_bus_t` HAL in `sensor_hal.h` (or a sibling header), mirroring the
-shape of `st_i2c_bus_t`:
+DS18B20 is 1-Wire, not I2C, so it does not fit the existing `st_i2c_bus_t`
+abstraction. The approved separation is now implemented with a small
+`st_onewire_bus_t` HAL in `sensor_hal.h`:
 
 ```
 portable DS18B20 protocol/state machine (sitetwin_sensors)
     → st_onewire_bus_t   (reset/presence, write-bit/byte, read-bit/byte)
-    → sitetwin_espidf_hal's ESP-IDF RMT or GPIO-bitbang 1-Wire implementation
+    → sitetwin_espidf_hal's Espressif RMT-backed 1-Wire implementation
 ```
 
 This keeps CRC generation, scratchpad decoding, and the conversion-state
-machine fully host-testable against a fake `st_onewire_bus_t`, the same way
-`test_sensor_foundation.c` host-tests SHT41 against a fake I2C bus today —
-none of that logic should require real hardware or the ESP-IDF toolchain to
-verify. This HAL proposal will be written up and reviewed before DS18B20
-implementation begins (Section 7, step 7), not designed ad hoc alongside the
-driver itself.
+machine fully host-testable against a fake `st_onewire_bus_t`; none of that
+logic requires real hardware or the ESP-IDF toolchain to verify.
 
 Each driver exposes only `st_driver_result_t probe(...)` and
 `st_driver_result_t sample(...)` per `sensor_driver.h` (surfaced through a
@@ -270,7 +264,7 @@ poll-based registry model entirely. That is the actual intended path for
 both sensors; the queue design below is retained only as a record of what
 was superseded, not as the current design.
 
-**Current design:** Reed (implemented) and PIR (not yet implemented) are
+**Current design:** Reed and PIR (both implemented) are
 each split into two layers:
 
 1. **Portable debounce/confirmation logic** — pure state machine, no GPIO
@@ -358,10 +352,9 @@ switch's current confirmed open/closed level, tracked inside
    step 3 is complete)
 6. Activity/Access Pod composition (BH1750 + PIR + Reed, event vs. slow path,
    door-alarm local rule preserved behind the driver/rule-logic boundary)
-7. Propose `st_onewire_bus_t` HAL (Section 5) for review — before writing
-   any DS18B20 protocol code
-8. DS18B20 (introduces the non-blocking conversion state machine, built
-   against the reviewed `st_onewire_bus_t` HAL from step 7)
+7. Complete: `st_onewire_bus_t` HAL boundary reviewed and implemented.
+8. Complete: DS18B20 non-blocking driver, host tests, RMT adapter, Equipment
+   composition, ESP32-C6 target build, and physical probe test.
 9. INA219 voltage/current (introduces calibration-register programming)
 10. Propose INA219 `power_mw` contract addition — only after voltage/current
     is implemented and confirmed working, not before

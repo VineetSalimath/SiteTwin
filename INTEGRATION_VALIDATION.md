@@ -2,22 +2,28 @@
 
 ## Verified physical path
 
-The deployed bring-up path has been demonstrated with the current health-record source:
+The deployed path has been demonstrated with real Pod 1, Pod 2, and Pod 3
+sensor records:
 
 `pod -> Zigbee coordinator -> UART1 -> Wi-Fi ESP -> JSON -> MQTTS/HiveMQ`
 
-- The pod joins the coordinator and transmits one 30-byte health payload every 15 seconds.
+- Pods join the coordinator and transmit fixed 30-byte telemetry payloads.
 - The coordinator accepts the payload on custom cluster `0xFC00`, command `0x01`.
 - The coordinator sends a 48-byte gateway frame on UART1 GPIO4 (TX).
 - The Wi-Fi ESP receives the frame on UART1 GPIO5 (RX), with shared ground and 115200 baud,
   8N1 signalling.
 - The Wi-Fi ESP CRC-validates and decodes the payload, produces JSON, publishes it to HiveMQ
   over TLS, and receives an MQTT publish acknowledgement.
-- The Pi bridge consumes the HiveMQ telemetry and forwards it to ThingsBoard; that bridge
-  integration is verified separately, though it was not re-exercised during this UART run.
+- The Pi bridge consumes HiveMQ telemetry and forwards it to ThingsBoard. The
+  downstream RPC path has also been verified with `get_config`, `test_output`,
+  and `set_threshold`, including a physical Pod 1 LED response.
 
-The source is a health/bring-up record, not a real sensor driver. Sensor acquisition,
-resilience/soak testing, power optimisation, OTA, and security hardening remain future work.
+Physical telemetry evidence includes Pod 2 illuminance/contact and all Pod 3
+paths: INA219, ADXL345, and DS18B20. On 2026-08-13 the powered waterproof
+DS18B20 probe was confirmed working on GPIO0, producing valid canonical
+temperature telemetry through Zigbee, UART, MQTT, and the server path.
+Resilience/soak testing, power optimisation, OTA, and security hardening remain
+future work.
 
 ## Canonical contract
 

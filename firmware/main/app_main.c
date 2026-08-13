@@ -17,7 +17,9 @@
 #include "sitetwin/adxl345.h"
 #include "sitetwin/bh1750.h"
 #include "sitetwin/contracts.h"
+#include "sitetwin/ds18b20.h"
 #include "sitetwin/espidf_i2c_bus.h"
+#include "sitetwin/espidf_onewire_bus.h"
 #include "sitetwin/gateway_frame.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/ina219.h"
@@ -89,14 +91,22 @@ static QueueHandle_t pod_event_queue;
 #else
 #define ST_EQUIPMENT_I2C_INTERNAL_PULLUPS false
 #endif
+#ifdef CONFIG_SITETWIN_DS18B20_INTERNAL_PULLUP
+#define ST_DS18B20_INTERNAL_PULLUP true
+#else
+#define ST_DS18B20_INTERNAL_PULLUP false
+#endif
 
 static st_espidf_i2c_master_bus_t equipment_i2c_bus;
 static st_espidf_i2c_device_t ina219_i2c_device;
 static st_espidf_i2c_device_t adxl345_i2c_device;
+static st_espidf_onewire_bus_t ds18b20_onewire_bus;
 static st_ina219_t ina219_sensor;
 static st_adxl345_t adxl345_sensor;
+static st_ds18b20_t ds18b20_sensor;
 static st_module_instance_t ina219_module;
 static st_module_instance_t adxl345_module;
+static st_module_instance_t ds18b20_module;
 #else
 static st_espidf_i2c_device_t sht41_i2c_device;
 static st_sht41_t sht41_sensor;
@@ -588,6 +598,7 @@ static esp_err_t pod_sensor_runtime_init(void)
 #elif SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
     static const uint8_t ina_slots[ST_INA219_CHANNEL_COUNT] = {0U, 1U};
     static const uint8_t adxl_slots[ST_ADXL345_CHANNEL_COUNT] = {2U};
+    static const uint8_t ds18b20_slots[ST_DS18B20_CHANNEL_COUNT] = {3U};
     const st_espidf_i2c_master_bus_config_t bus_config = {
         .controller = CONFIG_SITETWIN_EQUIPMENT_I2C_CONTROLLER,
         .sda_gpio = CONFIG_SITETWIN_EQUIPMENT_I2C_SDA_PIN,
@@ -604,8 +615,14 @@ static esp_err_t pod_sensor_runtime_init(void)
         .clock_hz = CONFIG_SITETWIN_EQUIPMENT_I2C_CLOCK_HZ,
         .timeout_ms = CONFIG_SITETWIN_EQUIPMENT_I2C_TIMEOUT_MS,
     };
+    const st_espidf_onewire_bus_config_t onewire_config = {
+        .gpio = CONFIG_SITETWIN_DS18B20_GPIO,
+        .enable_internal_pullup = ST_DS18B20_INTERNAL_PULLUP,
+        .max_rx_bytes = ST_DS18B20_SCRATCHPAD_SIZE,
+    };
     st_ina219_config_t ina_config;
     st_adxl345_config_t adxl_config;
+    st_ds18b20_config_t ds18b20_config;
     esp_err_t result;
 
     st_pod_runtime_init(&pod_runtime, ST_POD_EQUIPMENT, "POD_3", 3U);
@@ -621,6 +638,9 @@ static esp_err_t pod_sensor_runtime_init(void)
         st_espidf_i2c_device_init_on_bus(&adxl345_i2c_device,
                                          &equipment_i2c_bus, &adxl_target),
         TAG, "ADXL345 I2C registration failed");
+    ESP_RETURN_ON_ERROR(
+        st_espidf_onewire_bus_init(&ds18b20_onewire_bus, &onewire_config),
+        TAG, "DS18B20 1-Wire registration failed");
 
     memset(&ina_config, 0, sizeof(ina_config));
     ina_config.bus = st_espidf_i2c_bus(&ina219_i2c_device);
@@ -645,6 +665,13 @@ static esp_err_t pod_sensor_runtime_init(void)
     adxl_config.g_per_lsb = ST_ADXL345_DEFAULT_G_PER_LSB;
     adxl_config.vibration_sensor_id = "adxl345_vibration";
 
+    memset(&ds18b20_config, 0, sizeof(ds18b20_config));
+    ds18b20_config.bus = st_espidf_onewire_bus(&ds18b20_onewire_bus);
+    ds18b20_config.resolution_bits = CONFIG_SITETWIN_DS18B20_RESOLUTION_BITS;
+    ds18b20_config.sample_interval_ms = CONFIG_SITETWIN_DS18B20_SAMPLE_INTERVAL_MS;
+    ds18b20_config.cache_validity_ms = 250U;
+    ds18b20_config.temperature_sensor_id = "ds18b20_temperature";
+
     if (st_ina219_init(&ina219_sensor, &ina_config) != 0 ||
         st_module_instance_init(&ina219_module,
                                 st_ina219_module_driver(&ina219_sensor),
@@ -656,14 +683,23 @@ static esp_err_t pod_sensor_runtime_init(void)
                                 st_adxl345_module_driver(&adxl345_sensor),
                                 ST_ADXL345_CHANNEL_COUNT) != 0 ||
         st_module_instance_attach(&adxl345_module, &pod_runtime.registry,
-                                  adxl_slots, ST_ADXL345_CHANNEL_COUNT) != 0) {
+                                  adxl_slots, ST_ADXL345_CHANNEL_COUNT) != 0 ||
+        st_ds18b20_init(&ds18b20_sensor, &ds18b20_config) != 0 ||
+        st_module_instance_init(&ds18b20_module,
+                                st_ds18b20_module_driver(&ds18b20_sensor),
+                                ST_DS18B20_CHANNEL_COUNT) != 0 ||
+        st_module_instance_attach(&ds18b20_module, &pod_runtime.registry,
+                                  ds18b20_slots, ST_DS18B20_CHANNEL_COUNT) != 0) {
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "Equipment Pod ready: INA219 0x%02X and ADXL345 0x%02X on I2C%d",
+    ESP_LOGI(TAG,
+             "Equipment Pod ready: INA219 0x%02X and ADXL345 0x%02X on I2C%d, "
+             "DS18B20 on GPIO%d (%d-bit)",
              CONFIG_SITETWIN_INA219_I2C_ADDRESS,
              CONFIG_SITETWIN_ADXL345_I2C_ADDRESS,
-             CONFIG_SITETWIN_EQUIPMENT_I2C_CONTROLLER);
-    ESP_LOGW(TAG, "DS18B20 is not yet integrated; this image covers INA219 and ADXL345");
+             CONFIG_SITETWIN_EQUIPMENT_I2C_CONTROLLER,
+             CONFIG_SITETWIN_DS18B20_GPIO,
+             CONFIG_SITETWIN_DS18B20_RESOLUTION_BITS);
     return ESP_OK;
 #elif CONFIG_SITETWIN_SHT41_ENABLED
     static const uint8_t registry_slots[ST_SHT41_CHANNEL_COUNT] = {0U, 1U};

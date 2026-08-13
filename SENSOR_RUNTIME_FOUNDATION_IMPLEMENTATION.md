@@ -1,7 +1,7 @@
 ---
 title: Sensor Runtime Foundation Implementation
 project: SiteTwin
-status: Implemented and host/compile validated; physical SHT41 validation pending
+status: Implemented, host/compile validated, and subsequently physically validated
 date: 2026-08-06
 tags:
   - sitetwin
@@ -16,6 +16,11 @@ tags:
 Related: [[SENSOR_PROTOTYPE_PORTING_ASSESSMENT]], [[Firmware Architecture]], [[Pod and Sensor Strategy]], [[Hardware Bring-Up and Open Decisions]]
 
 ## Outcome
+
+Status addendum (2026-08-13): the SHT41 foundation described here was
+subsequently incorporated into Pod 1 and physically exercised through the full
+gateway/server path. This document retains the original 2026-08-06 milestone
+evidence below, but physical validation is no longer outstanding.
 
 The existing single-sample contract was retained through bounded logical channel adapters sharing one physical sensor context. This enables SHT41 temperature and humidity without changing the proven Zigbee, UART, JSON, or MQTT contracts.
 

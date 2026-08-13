@@ -19,7 +19,7 @@ From this directory, run:
 powershell -ExecutionPolicy Bypass -File .\host_tests\run-tests.ps1
 ```
 
-The test suite covers module detection/removal, warm-up quality flags, change suppression and heartbeat reporting, monotonically increasing sensor sequences, event priority, latest-value replacement, PIR stabilization and duplicate suppression, ADXL345 FIFO/RMS/clipping behaviour, a compact Zigbee payload round trip, gateway node rejoin/address changes, duplicate/stale rejection, binary gateway frame integrity, canonical gateway JSON, delivery queue pressure, and a randomized stress harness.
+The test suite covers module detection/removal, warm-up quality flags, change suppression and heartbeat reporting, monotonically increasing sensor sequences, event priority, latest-value replacement, PIR stabilization and duplicate suppression, ADXL345 FIFO/RMS/clipping behaviour, DS18B20 CRC/signed decoding/non-blocking conversion/removal recovery, a compact Zigbee payload round trip, gateway node rejoin/address changes, duplicate/stale rejection, binary gateway frame integrity, canonical gateway JSON, delivery queue pressure, and a randomized stress harness.
 
 ## Pod profiles
 
@@ -27,9 +27,9 @@ Pod builds select one composition with `SITETWIN_POD_PROFILE`:
 
 | Profile | Pod ID | Sensors | Prototype wiring |
 | --- | --- | --- | --- |
-| `environment` (default) | `ENV_01` | SHT41 temperature/humidity | I2C SDA GPIO6, SCL GPIO7 |
-| `activity` | `ACT_01` | BH1750 illuminance, SR505 PIR, reed contact | I2C SDA GPIO6/SCL GPIO7, PIR GPIO1, reed GPIO0 |
-| `equipment` | `EQP_01` | INA219 voltage/current, ADXL345 vibration RMS | Shared I2C SDA GPIO6/SCL GPIO7 |
+| `environment` (default) | `POD_1` | SHT41 temperature/humidity, SCD41 CO2, SGP40 VOC index | I2C SDA GPIO6, SCL GPIO7 |
+| `activity` | `POD_2` | BH1750 illuminance, SR505 PIR, reed contact | I2C SDA GPIO6/SCL GPIO7, PIR GPIO1, reed GPIO0 |
+| `equipment` | `POD_3` | INA219 voltage/current, ADXL345 vibration RMS, DS18B20 temperature | Shared I2C SDA GPIO6/SCL GPIO7; DS18B20 DQ GPIO0 with external 4.7 kΩ pull-up to 3.3 V |
 
 The profile values and prototype pin assignments are configurable through
 `menuconfig`. The Activity GPIO ISR only queues wake-ups; debounce, PIR
@@ -70,9 +70,13 @@ Follow [SITETWIN_ZIGBEE_BRINGUP.md](SITETWIN_ZIGBEE_BRINGUP.md) to build and fla
 
 ## Hardware validation still required
 
-The Activity and Equipment images compile for ESP32-C6 and their portable
-drivers are host-tested, but PIR and ADXL345 still require first-board
-validation. Confirm SR505 polarity/retrigger behaviour and the GPIO0/GPIO1
-prototype assignment, then establish an ADXL345 mounted-idle noise baseline and
-a known-vibration response. DS18B20 is intentionally not part of the Equipment
-image yet and must not be marked complete.
+The Activity Pod has been physically exercised end to end. The Equipment Pod's
+INA219 and ADXL345 have also produced canonical telemetry through Zigbee, UART,
+MQTT, and ThingsBoard; an observed stationary ADXL345 feature was approximately
+`0.004 g` with valid quality. A complete mounted baseline/threshold dataset is
+still required before selecting an operational vibration alarm threshold.
+
+The DS18B20 production driver is part of the Equipment image, host-tested,
+compiled for ESP32-C6, and physically verified on Pod 3. The powered three-wire
+probe operates on GPIO0 with an external approximately 4.7 kΩ DQ-to-3.3 V
+pull-up, and its canonical temperature telemetry was observed end to end.

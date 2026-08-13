@@ -21,4 +21,11 @@ typedef struct {
                             uint8_t *data, size_t length);
 } st_i2c_bus_t;
 
+typedef struct {
+    void *context;
+    st_hal_result_t (*reset)(void *context);
+    st_hal_result_t (*write)(void *context, const uint8_t *data, size_t length);
+    st_hal_result_t (*read)(void *context, uint8_t *data, size_t length);
+} st_onewire_bus_t;
+
 #endif

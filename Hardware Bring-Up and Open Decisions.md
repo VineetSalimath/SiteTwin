@@ -2,7 +2,7 @@
 title: Hardware Bring-Up and Open Decisions
 project: SiteTwin
 status: Active hardware integration
-updated: 2026-07-31
+updated: 2026-08-13
 tags:
   - sitetwin
   - hardware
@@ -26,6 +26,10 @@ This note is the handoff point for Codex and the project team as SiteTwin moves 
 - The existing portable C sensor-driver abstraction, registry, reporting policy, telemetry queues, Zigbee codec, and gateway core remain valid and should be preserved while hardware-specific adapters are added.
 - Two ESP32-C6-DevKitC-1 boards have formed a SiteTwin Zigbee network and repeatedly delivered the real 30-byte SiteTwin payload from pod to gateway.
 - ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3 are the currently tested software baseline.
+- The three pod identities are standardized as `POD_1`, `POD_2`, and `POD_3`.
+- Pod 2 and all three Pod 3 sensor paths have been physically exercised through
+  Zigbee and MQTT. DS18B20 operates on GPIO0 with the external DQ pull-up and
+  produces valid temperature telemetry.
 
 ## Confirmed Firmware Direction
 
@@ -89,16 +93,15 @@ Use multiple ADC samples and robust classification bands only after bench data e
 
 ## Immediate Bring-Up Sequence
 
-1. Complete: pin ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3, then prove pod-to-gateway SiteTwin telemetry on two ESP32-C6 boards.
-2. Verify and document the actual GPIO assignment used on the ESP32-C6-DevKitC-1 prototype.
-3. Prove a basic GPIO and I2C application on the development board.
-4. Implement the real SHT41 driver behind `st_sensor_driver_t`.
-5. Run the existing pod runtime with a real SHT41 while keeping the rest of the pipeline unchanged.
-6. Characterize sensor current, warm-up, noise, and practical sample cadence.
-7. Prototype the resistor-coded ID circuit on a breadboard and capture ADC distributions for each proposed ID resistor.
-8. After team confirmation, implement the selected port/mux/power-gating abstraction.
-9. Add physical insertion/removal testing only after the identification path is stable.
-10. Continue Zigbee, MQTT, and gateway hardware integration after local sensor acquisition is reliable.
+1. Complete: pin ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3, then prove pod-to-gateway SiteTwin telemetry on ESP32-C6 boards.
+2. Complete for current prototypes: GPIO/I2C mappings and real sensor compositions for Pods 1-3.
+3. Complete: real SHT41, SCD41, SGP40, BH1750, PIR, reed, INA219, and ADXL345 paths implemented and exercised.
+4. Complete: physically validate the DS18B20 on Pod 3 using GPIO0 and an external approximately 4.7 kΩ DQ pull-up to 3.3 V.
+5. Characterize sensor current, warm-up, noise, and practical sample cadence.
+6. Prototype the resistor-coded ID circuit on a breadboard and capture ADC distributions for each proposed ID resistor.
+7. After team confirmation, implement the selected port/mux/power-gating abstraction.
+8. Add physical insertion/removal testing only after the identification path is stable.
+9. Run multi-pod soak tests and collect report-ready evidence.
 
 ## Guidance for Codex
 

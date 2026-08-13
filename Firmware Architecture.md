@@ -1,7 +1,7 @@
 ---
 title: Firmware Architecture
 project: SiteTwin
-status: Hardware Zigbee bring-up complete
+status: Three pod sensor compositions implemented and physically validated
 tags:
   - sitetwin
   - firmware
@@ -52,14 +52,15 @@ separate images in `build_pod` and `build_gateway`: the pod is a Zigbee End Devi
 a Zigbee Coordinator. The pod sends the implemented fixed 30-byte SiteTwin payload through custom
 cluster `0xFC00`, command `0x01`; the gateway validates it with the existing portable runtime.
 
-This was deployed and observed on two ESP32-C6-DevKitC-1 boards. The pod restored its network and
-sent periodic SiteTwin health frames; the gateway logged `ingress result 0` for each frame. The
-temporary health record is a bring-up source only. Real sensor drivers will replace it without
-changing the queue, codec, or Zigbee transport.
+This was first deployed and observed on two ESP32-C6-DevKitC-1 boards using
+health frames. The same queue, codec, and Zigbee transport now carry real
+sensor records from all three pod profiles; the temporary health source is no
+longer the active sensor-integration milestone.
 
 ## Common Task Model
 
-The ESP-IDF deployment remains task based using FreeRTOS. The portable core does not create tasks itself; future composition code will call it from these common tasks:
+The ESP-IDF deployment is task based using FreeRTOS. The portable core does not
+create tasks itself; composition code invokes it from ESP-IDF task context:
 
 - pod manager
 - acquisition
@@ -146,10 +147,9 @@ The sensor registry increments a sequence number whenever a reading is produced.
 
 ## Remaining Firmware Work
 
-- real board drivers for I2C, GPIO, PIR or reed interrupts, and ADXL345 FIFO
-- sensor-to-runtime adapters that queue real readings in place of the development health record
-- gateway IEEE/pod/sensor-slot registry provisioning rather than the current bring-up labels
-- UART forwarding from the Zigbee gateway ESP to the server/Wi-Fi ESP
+- collect a controlled ADXL345 baseline/threshold dataset
+- implement the final module-identification/hot-swap electronics and dynamic driver selection
+- replace fixed gateway node/slot mappings with provisioned identity data
 - commissioning allow-listing, application acknowledgement, retry policy, and production security policy
 - watchdog and stack-margin measurement on the final workload
 - deep sleep and per-port sensor power switching
