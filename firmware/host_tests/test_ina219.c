@@ -158,7 +158,7 @@ static int fixture_init(ina219_fixture_t *fixture, fake_ina219_bus_t *bus,
     config.cache_validity_ms = cache_validity_ms;
     config.bus_voltage_sensor_id = "ina219_bus_voltage";
     config.current_sensor_id = "ina219_current";
-    st_pod_runtime_init(&fixture->runtime, ST_POD_EQUIPMENT, "EQP_01", 3U);
+    st_pod_runtime_init(&fixture->runtime, ST_POD_EQUIPMENT, "POD_3", 3U);
     if (st_ina219_init(&fixture->sensor, &config) != 0 ||
         st_module_instance_init(&fixture->module,
                                 st_ina219_module_driver(&fixture->sensor),

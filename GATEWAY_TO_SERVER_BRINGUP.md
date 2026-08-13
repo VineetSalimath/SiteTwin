@@ -238,10 +238,11 @@ input is wired in. `gateway_pipeline.c` is split: its pipeline-invocation logic
 (encode → ingest → JSON → publish) is reused by the eventual real UART path; its
 test-record construction is not.
 
-## Immediate next steps
+## Integration status update (2026-08-13)
 
-1. **Blocked, pending Zigbee-side owner**: confirm UART payload contents. Separately,
-   confirm baud rate and TX/RX pin assignment (does not require design discussion).
+1. ~~Confirm and physically validate UART payload, baud, and pin assignment~~
+   **Done.** The Zigbee gateway forwards the versioned frame to the Wi-Fi ESP,
+   which publishes canonical sensor JSON and receives MQTT acknowledgements.
 2. ~~Design and implement the switchable test data-source module~~ **Done.**
 3. ~~Design the heartbeat/health record representation in `bridge.py`~~ **Done.**
 4. ~~Harden `bridge.py`~~ **Done**: systemd service, HiveMQ reconnect, ThingsBoard
@@ -250,6 +251,6 @@ test-record construction is not.
    **Done.** Still open: request `priority` be added to `st_gateway_telemetry_to_json`
    upstream (shared code change, needs team input).
 6. ~~Implement UART frame receive, parsing, and payload interpretation~~ **Done**.
-7. Before relying on the UART link for real integration: physical loopback or real
-   two-board test (not yet performed), and the untested edge cases listed under
-   "UART link" above.
+7. ~~Run a real two-board UART and end-to-end sensor test~~ **Done.** Real Pod 1,
+   Pod 2, and Pod 3 sensor records have traversed the deployed path. Remaining
+   work is soak/fault-injection coverage rather than initial link bring-up.

@@ -122,7 +122,7 @@ static int fixture_init(bh1750_fixture_t *fixture, fake_bh1750_bus_t *bus,
     config.sample_interval_ms = sample_interval_ms;
     config.cache_validity_ms = cache_validity_ms;
     config.illuminance_sensor_id = "bh1750_illuminance";
-    st_pod_runtime_init(&fixture->runtime, ST_POD_ACTIVITY_ACCESS, "ACT_01", 7U);
+    st_pod_runtime_init(&fixture->runtime, ST_POD_ACTIVITY_ACCESS, "POD_2", 7U);
     if (st_bh1750_init(&fixture->sensor, &config) != 0 ||
         st_module_instance_init(&fixture->module,
                                 st_bh1750_module_driver(&fixture->sensor),

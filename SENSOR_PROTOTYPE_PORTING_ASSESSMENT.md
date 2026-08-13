@@ -2,7 +2,7 @@
 
 Status: Option C approved; implementation recorded in linked note
 
-Date: 2026-08-06
+Date: 2026-08-06; current-status addendum updated 2026-08-13
 
 Branch: `feature/sensor-runtime-foundation`
 
@@ -20,6 +20,18 @@ Implementation details and verification evidence are recorded in
 This assessment recorded the baseline and the smallest compatible sensor-runtime proposal before implementation. The existing Arduino sketches remain useful hardware-validation prototypes and are preserved unchanged.
 
 The initial stop point was satisfied when Option C, the optional acquisition timestamp, and the stricter validity normalization were approved. The linked implementation note records the resulting foundation and SHT41 work. Yicheng's drivers, SCD41, SGP40, ADXL345, final hot-swap electronics, and transport-contract changes remain outside this branch's approved scope.
+
+### Current-status addendum (2026-08-11)
+
+The table below remains the historical assessment at the foundation-branch
+boundary. Subsequent branches implemented SCD41, SGP40, BH1750, PIR, Reed,
+INA219, ADXL345, and now DS18B20. The DS18B20 implementation replaces the
+prototype's blocking library call with a portable non-blocking state machine,
+ROM/scratchpad CRC checks, signed decoding, removal recovery, and an ESP-IDF
+RMT-backed 1-Wire HAL. It is host-tested, ESP32-C6 target-compiled, and was
+physically verified with the powered waterproof probe on 2026-08-13. The
+universal-port identification/hot-swap electronics remain outside the
+completed sensor-driver work.
 
 ## Baseline evidence
 

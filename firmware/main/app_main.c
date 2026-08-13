@@ -2,21 +2,31 @@
 #include <string.h>
 
 #include "esp_err.h"
+#include "esp_check.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
+#include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_zigbee.h"
 
+#include "sitetwin/adxl345.h"
+#include "sitetwin/bh1750.h"
 #include "sitetwin/contracts.h"
+#include "sitetwin/ds18b20.h"
 #include "sitetwin/espidf_i2c_bus.h"
+#include "sitetwin/espidf_onewire_bus.h"
 #include "sitetwin/gateway_frame.h"
 #include "sitetwin/gateway_runtime.h"
+#include "sitetwin/ina219.h"
 #include "sitetwin/module_instance.h"
+#include "sitetwin/pir.h"
 #include "sitetwin/pod_runtime.h"
+#include "sitetwin/reed.h"
 #include "sitetwin/sht41.h"
 #include "sitetwin/zigbee_payload.h"
 
@@ -30,7 +40,9 @@
 #define ST_GATEWAY_UART_TX_BUFFER_SIZE 1024U
 
 static const char *TAG = "sitetwin_zigbee";
+#if SITETWIN_GATEWAY_ROLE_BUILD
 static st_gateway_runtime_t gateway_runtime;
+#endif
 static volatile bool pod_joined;
 
 #if !SITETWIN_GATEWAY_ROLE_BUILD
@@ -41,9 +53,65 @@ static volatile bool pod_joined;
 #endif
 
 static st_pod_runtime_t pod_runtime;
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+#ifdef CONFIG_SITETWIN_ACTIVITY_I2C_INTERNAL_PULLUPS
+#define ST_ACTIVITY_I2C_INTERNAL_PULLUPS true
+#else
+#define ST_ACTIVITY_I2C_INTERNAL_PULLUPS false
+#endif
+#ifdef CONFIG_SITETWIN_ACTIVITY_PIR_ACTIVE_HIGH
+#define ST_ACTIVITY_PIR_ACTIVE_LEVEL 1U
+#else
+#define ST_ACTIVITY_PIR_ACTIVE_LEVEL 0U
+#endif
+#ifdef CONFIG_SITETWIN_ACTIVITY_REED_OPEN_HIGH
+#define ST_ACTIVITY_REED_OPEN_HIGH 1U
+#else
+#define ST_ACTIVITY_REED_OPEN_HIGH 0U
+#endif
+
+typedef struct {
+    const char *sensor_id;
+    st_sensor_kind_t kind;
+    uint64_t timestamp_ms;
+    float value;
+} st_pending_pod_event_t;
+
+static st_espidf_i2c_master_bus_t activity_i2c_bus;
+static st_espidf_i2c_device_t bh1750_i2c_device;
+static st_bh1750_t bh1750_sensor;
+static st_module_instance_t bh1750_module;
+static st_pir_t pir_sensor;
+static st_reed_debounce_t reed_sensor;
+static QueueHandle_t activity_gpio_queue;
+static QueueHandle_t pod_event_queue;
+#elif SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
+#ifdef CONFIG_SITETWIN_EQUIPMENT_I2C_INTERNAL_PULLUPS
+#define ST_EQUIPMENT_I2C_INTERNAL_PULLUPS true
+#else
+#define ST_EQUIPMENT_I2C_INTERNAL_PULLUPS false
+#endif
+#ifdef CONFIG_SITETWIN_DS18B20_INTERNAL_PULLUP
+#define ST_DS18B20_INTERNAL_PULLUP true
+#else
+#define ST_DS18B20_INTERNAL_PULLUP false
+#endif
+
+static st_espidf_i2c_master_bus_t equipment_i2c_bus;
+static st_espidf_i2c_device_t ina219_i2c_device;
+static st_espidf_i2c_device_t adxl345_i2c_device;
+static st_espidf_onewire_bus_t ds18b20_onewire_bus;
+static st_ina219_t ina219_sensor;
+static st_adxl345_t adxl345_sensor;
+static st_ds18b20_t ds18b20_sensor;
+static st_module_instance_t ina219_module;
+static st_module_instance_t adxl345_module;
+static st_module_instance_t ds18b20_module;
+#else
 static st_espidf_i2c_device_t sht41_i2c_device;
 static st_sht41_t sht41_sensor;
 static st_module_instance_t sht41_module;
+#endif
 static bool pod_sensor_runtime_ready;
 #endif
 
@@ -109,6 +177,7 @@ static void retry_commissioning(ezb_bdb_comm_mode_mask_t mode)
                       (void *)(uintptr_t)mode, 5, NULL);
 }
 
+#if SITETWIN_GATEWAY_ROLE_BUILD
 static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *header,
                                                    const uint8_t *payload,
                                                    uint16_t payload_length)
@@ -152,7 +221,9 @@ static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *heade
 #endif
     return result == ST_GATEWAY_INGRESS_INVALID ? EZB_ZCL_STATUS_INVALID_FIELD : EZB_ZCL_STATUS_SUCCESS;
 }
+#endif
 
+#if SITETWIN_GATEWAY_ROLE_BUILD
 static uint8_t gateway_command_discovery(bool is_recv, uint8_t **list)
 {
     static uint8_t receive_commands[] = {ST_ZIGBEE_TELEMETRY_COMMAND};
@@ -161,6 +232,7 @@ static uint8_t gateway_command_discovery(bool is_recv, uint8_t **list)
     return is_recv ? 1U : 0U;
 }
 
+#else
 static uint8_t pod_command_discovery(bool is_recv, uint8_t **list)
 {
     static uint8_t send_commands[] = {ST_ZIGBEE_TELEMETRY_COMMAND};
@@ -169,6 +241,9 @@ static uint8_t pod_command_discovery(bool is_recv, uint8_t **list)
     return is_recv ? 0U : 1U;
 }
 
+#endif
+
+#if SITETWIN_GATEWAY_ROLE_BUILD
 static void gateway_cluster_init(uint8_t endpoint)
 {
     const ezb_zcl_custom_cluster_handlers_t handlers = {
@@ -182,6 +257,7 @@ static void gateway_cluster_init(uint8_t endpoint)
     ESP_ERROR_CHECK(ezb_zcl_custom_cluster_handlers_register(&handlers));
 }
 
+#else
 static void pod_cluster_init(uint8_t endpoint)
 {
     const ezb_zcl_custom_cluster_handlers_t handlers = {
@@ -193,6 +269,7 @@ static void pod_cluster_init(uint8_t endpoint)
     (void)endpoint;
     ESP_ERROR_CHECK(ezb_zcl_custom_cluster_handlers_register(&handlers));
 }
+#endif
 
 static void cluster_deinit(uint8_t endpoint)
 {
@@ -312,9 +389,319 @@ static bool zigbee_signal_handler(const ezb_app_signal_t *signal)
 }
 
 #if !SITETWIN_GATEWAY_ROLE_BUILD
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+static uint64_t pod_now_ms(void)
+{
+    return (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+}
+
+static void IRAM_ATTR activity_gpio_isr(void *context)
+{
+    uint32_t gpio = (uint32_t)(uintptr_t)context;
+    BaseType_t task_woken = pdFALSE;
+
+    if (activity_gpio_queue != NULL) {
+        (void)xQueueSendFromISR(activity_gpio_queue, &gpio, &task_woken);
+    }
+    if (task_woken == pdTRUE) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+static void queue_pod_event(const char *sensor_id, st_sensor_kind_t kind,
+                            uint64_t timestamp_ms, float value)
+{
+    st_pending_pod_event_t event = {
+        .sensor_id = sensor_id,
+        .kind = kind,
+        .timestamp_ms = timestamp_ms,
+        .value = value,
+    };
+
+    if (xQueueSend(pod_event_queue, &event, 0U) != pdTRUE) {
+        ESP_LOGW(TAG, "Dropping %s event: pod event queue full", sensor_id);
+    }
+}
+
+static void activity_gpio_task(void *context)
+{
+    uint32_t changed_gpio;
+
+    (void)context;
+    for (;;) {
+        st_pir_event_t pir_event;
+        st_reed_event_t reed_event;
+        uint64_t now_ms;
+        TickType_t wait_ticks = st_pir_is_stabilized(&pir_sensor) != 0U
+                                    ? portMAX_DELAY
+                                    : pdMS_TO_TICKS(100U);
+        BaseType_t edge_received;
+
+        /* During the five-second PIR warm-up, a short timeout establishes a
+         * clean post-warm baseline. Steady-state operation blocks until a
+         * GPIO edge, so the ISR remains a wake-only path without continuous
+         * polling. */
+        edge_received = xQueueReceive(activity_gpio_queue, &changed_gpio, wait_ticks);
+        now_ms = pod_now_ms();
+        if (st_pir_process_level(&pir_sensor, now_ms,
+                                 (uint8_t)gpio_get_level(CONFIG_SITETWIN_ACTIVITY_PIR_GPIO),
+                                 &pir_event) == 1) {
+            ESP_LOGI(TAG, "PIR motion detected at %llu ms (event %lu)",
+                     (unsigned long long)pir_event.detected_at_ms,
+                     (unsigned long)pir_event.event_count);
+            queue_pod_event("pir_motion", ST_SENSOR_MOTION,
+                            pir_event.detected_at_ms, 1.0F);
+        }
+        if (st_reed_debounce_update(
+                &reed_sensor, now_ms,
+                (uint8_t)gpio_get_level(CONFIG_SITETWIN_ACTIVITY_REED_GPIO),
+                &reed_event) == 1) {
+            queue_pod_event("reed_contact", ST_SENSOR_CONTACT,
+                            reed_event.confirmed_at_ms,
+                            reed_event.level == ST_REED_OPEN ? 1.0F : 0.0F);
+        }
+        if (edge_received == pdTRUE &&
+            changed_gpio == CONFIG_SITETWIN_ACTIVITY_REED_GPIO) {
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_SITETWIN_ACTIVITY_REED_DEBOUNCE_MS));
+            now_ms = pod_now_ms();
+            if (st_reed_debounce_update(
+                    &reed_sensor, now_ms,
+                    (uint8_t)gpio_get_level(CONFIG_SITETWIN_ACTIVITY_REED_GPIO),
+                    &reed_event) == 1) {
+                queue_pod_event("reed_contact", ST_SENSOR_CONTACT,
+                                reed_event.confirmed_at_ms,
+                                reed_event.level == ST_REED_OPEN ? 1.0F : 0.0F);
+            }
+        }
+    }
+}
+
+static esp_err_t activity_gpio_init(void)
+{
+    gpio_config_t config;
+    esp_err_t result;
+    uint64_t now_ms = pod_now_ms();
+    const st_pir_config_t pir_config = {
+        .stabilization_ms = CONFIG_SITETWIN_ACTIVITY_PIR_STABILIZATION_MS,
+        .retrigger_suppression_ms = CONFIG_SITETWIN_ACTIVITY_PIR_RETRIGGER_MS,
+        .active_level = ST_ACTIVITY_PIR_ACTIVE_LEVEL,
+        .sensor_id = "pir_motion",
+    };
+    const st_reed_config_t reed_config = {
+        .debounce_ms = CONFIG_SITETWIN_ACTIVITY_REED_DEBOUNCE_MS,
+        .open_when_raw_high = ST_ACTIVITY_REED_OPEN_HIGH,
+    };
+
+    activity_gpio_queue = xQueueCreate(16U, sizeof(uint32_t));
+    pod_event_queue = xQueueCreate(16U, sizeof(st_pending_pod_event_t));
+    if (activity_gpio_queue == NULL || pod_event_queue == NULL ||
+        st_pir_init(&pir_sensor, &pir_config, now_ms) != 0 ||
+        st_reed_debounce_init(&reed_sensor, &reed_config) != 0) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    memset(&config, 0, sizeof(config));
+    config.pin_bit_mask = 1ULL << CONFIG_SITETWIN_ACTIVITY_PIR_GPIO;
+    config.mode = GPIO_MODE_INPUT;
+    config.pull_up_en = GPIO_PULLUP_DISABLE;
+    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    config.intr_type = GPIO_INTR_ANYEDGE;
+    ESP_RETURN_ON_ERROR(gpio_config(&config), TAG, "PIR GPIO configuration failed");
+
+    memset(&config, 0, sizeof(config));
+    config.pin_bit_mask = 1ULL << CONFIG_SITETWIN_ACTIVITY_REED_GPIO;
+    config.mode = GPIO_MODE_INPUT;
+#ifdef CONFIG_SITETWIN_ACTIVITY_REED_INTERNAL_PULLUP
+    config.pull_up_en = GPIO_PULLUP_ENABLE;
+#else
+    config.pull_up_en = GPIO_PULLUP_DISABLE;
+#endif
+    config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    config.intr_type = GPIO_INTR_ANYEDGE;
+    ESP_RETURN_ON_ERROR(gpio_config(&config), TAG, "Reed GPIO configuration failed");
+
+    result = gpio_install_isr_service(0);
+    if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+        return result;
+    }
+    ESP_RETURN_ON_ERROR(
+        gpio_isr_handler_add(CONFIG_SITETWIN_ACTIVITY_PIR_GPIO, activity_gpio_isr,
+                             (void *)(uintptr_t)CONFIG_SITETWIN_ACTIVITY_PIR_GPIO),
+        TAG, "PIR ISR registration failed");
+    ESP_RETURN_ON_ERROR(
+        gpio_isr_handler_add(CONFIG_SITETWIN_ACTIVITY_REED_GPIO, activity_gpio_isr,
+                             (void *)(uintptr_t)CONFIG_SITETWIN_ACTIVITY_REED_GPIO),
+        TAG, "Reed ISR registration failed");
+
+    (void)st_pir_process_level(
+        &pir_sensor, now_ms,
+        (uint8_t)gpio_get_level(CONFIG_SITETWIN_ACTIVITY_PIR_GPIO), NULL);
+    (void)st_reed_debounce_update(
+        &reed_sensor, now_ms,
+        (uint8_t)gpio_get_level(CONFIG_SITETWIN_ACTIVITY_REED_GPIO), NULL);
+    if (xTaskCreate(activity_gpio_task, "st_activity_gpio", 3072, NULL, 6, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+#endif
+
 static esp_err_t pod_sensor_runtime_init(void)
 {
-#if CONFIG_SITETWIN_SHT41_ENABLED
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+    static const uint8_t registry_slots[ST_BH1750_CHANNEL_COUNT] = {0U};
+    const st_espidf_i2c_master_bus_config_t bus_config = {
+        .controller = CONFIG_SITETWIN_ACTIVITY_I2C_CONTROLLER,
+        .sda_gpio = CONFIG_SITETWIN_ACTIVITY_I2C_SDA_PIN,
+        .scl_gpio = CONFIG_SITETWIN_ACTIVITY_I2C_SCL_PIN,
+        .enable_internal_pullups = ST_ACTIVITY_I2C_INTERNAL_PULLUPS,
+    };
+    const st_espidf_i2c_target_config_t target_config = {
+        .address = CONFIG_SITETWIN_BH1750_I2C_ADDRESS,
+        .clock_hz = CONFIG_SITETWIN_ACTIVITY_I2C_CLOCK_HZ,
+        .timeout_ms = CONFIG_SITETWIN_ACTIVITY_I2C_TIMEOUT_MS,
+    };
+    st_bh1750_config_t sensor_config;
+    esp_err_t result;
+
+    st_pod_runtime_init(&pod_runtime, ST_POD_ACTIVITY_ACCESS, "POD_2", 2U);
+    result = st_espidf_i2c_master_bus_init(&activity_i2c_bus, &bus_config);
+    if (result != ESP_OK) {
+        return result;
+    }
+    result = st_espidf_i2c_device_init_on_bus(&bh1750_i2c_device,
+                                               &activity_i2c_bus, &target_config);
+    if (result != ESP_OK) {
+        return result;
+    }
+    memset(&sensor_config, 0, sizeof(sensor_config));
+    sensor_config.bus = st_espidf_i2c_bus(&bh1750_i2c_device);
+    sensor_config.address = CONFIG_SITETWIN_BH1750_I2C_ADDRESS;
+    sensor_config.sample_interval_ms = CONFIG_SITETWIN_BH1750_SAMPLE_INTERVAL_MS;
+    sensor_config.cache_validity_ms = 250U;
+    sensor_config.illuminance_sensor_id = "bh1750_illuminance";
+    if (st_bh1750_init(&bh1750_sensor, &sensor_config) != 0 ||
+        st_module_instance_init(&bh1750_module,
+                                st_bh1750_module_driver(&bh1750_sensor),
+                                ST_BH1750_CHANNEL_COUNT) != 0 ||
+        st_module_instance_attach(&bh1750_module, &pod_runtime.registry,
+                                  registry_slots, ST_BH1750_CHANNEL_COUNT) != 0) {
+        return ESP_FAIL;
+    }
+    ESP_RETURN_ON_ERROR(activity_gpio_init(), TAG, "Activity GPIO runtime failed");
+    ESP_LOGI(TAG,
+             "Activity Pod ready: BH1750 0x%02X, SR505 GPIO%d, reed GPIO%d",
+             CONFIG_SITETWIN_BH1750_I2C_ADDRESS,
+             CONFIG_SITETWIN_ACTIVITY_PIR_GPIO,
+             CONFIG_SITETWIN_ACTIVITY_REED_GPIO);
+    return ESP_OK;
+#elif SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
+    static const uint8_t ina_slots[ST_INA219_CHANNEL_COUNT] = {0U, 1U};
+    static const uint8_t adxl_slots[ST_ADXL345_CHANNEL_COUNT] = {2U};
+    static const uint8_t ds18b20_slots[ST_DS18B20_CHANNEL_COUNT] = {3U};
+    const st_espidf_i2c_master_bus_config_t bus_config = {
+        .controller = CONFIG_SITETWIN_EQUIPMENT_I2C_CONTROLLER,
+        .sda_gpio = CONFIG_SITETWIN_EQUIPMENT_I2C_SDA_PIN,
+        .scl_gpio = CONFIG_SITETWIN_EQUIPMENT_I2C_SCL_PIN,
+        .enable_internal_pullups = ST_EQUIPMENT_I2C_INTERNAL_PULLUPS,
+    };
+    const st_espidf_i2c_target_config_t ina_target = {
+        .address = CONFIG_SITETWIN_INA219_I2C_ADDRESS,
+        .clock_hz = CONFIG_SITETWIN_EQUIPMENT_I2C_CLOCK_HZ,
+        .timeout_ms = CONFIG_SITETWIN_EQUIPMENT_I2C_TIMEOUT_MS,
+    };
+    const st_espidf_i2c_target_config_t adxl_target = {
+        .address = CONFIG_SITETWIN_ADXL345_I2C_ADDRESS,
+        .clock_hz = CONFIG_SITETWIN_EQUIPMENT_I2C_CLOCK_HZ,
+        .timeout_ms = CONFIG_SITETWIN_EQUIPMENT_I2C_TIMEOUT_MS,
+    };
+    const st_espidf_onewire_bus_config_t onewire_config = {
+        .gpio = CONFIG_SITETWIN_DS18B20_GPIO,
+        .enable_internal_pullup = ST_DS18B20_INTERNAL_PULLUP,
+        .max_rx_bytes = ST_DS18B20_SCRATCHPAD_SIZE,
+    };
+    st_ina219_config_t ina_config;
+    st_adxl345_config_t adxl_config;
+    st_ds18b20_config_t ds18b20_config;
+    esp_err_t result;
+
+    st_pod_runtime_init(&pod_runtime, ST_POD_EQUIPMENT, "POD_3", 3U);
+    result = st_espidf_i2c_master_bus_init(&equipment_i2c_bus, &bus_config);
+    if (result != ESP_OK) {
+        return result;
+    }
+    ESP_RETURN_ON_ERROR(
+        st_espidf_i2c_device_init_on_bus(&ina219_i2c_device,
+                                         &equipment_i2c_bus, &ina_target),
+        TAG, "INA219 I2C registration failed");
+    ESP_RETURN_ON_ERROR(
+        st_espidf_i2c_device_init_on_bus(&adxl345_i2c_device,
+                                         &equipment_i2c_bus, &adxl_target),
+        TAG, "ADXL345 I2C registration failed");
+    ESP_RETURN_ON_ERROR(
+        st_espidf_onewire_bus_init(&ds18b20_onewire_bus, &onewire_config),
+        TAG, "DS18B20 1-Wire registration failed");
+
+    memset(&ina_config, 0, sizeof(ina_config));
+    ina_config.bus = st_espidf_i2c_bus(&ina219_i2c_device);
+    ina_config.address = CONFIG_SITETWIN_INA219_I2C_ADDRESS;
+    ina_config.shunt_resistance_ohms =
+        (float)CONFIG_SITETWIN_INA219_SHUNT_MILLIOHMS / 1000.0F;
+    ina_config.max_expected_current_a =
+        (float)CONFIG_SITETWIN_INA219_MAX_CURRENT_MA / 1000.0F;
+    ina_config.sample_interval_ms = CONFIG_SITETWIN_INA219_SAMPLE_INTERVAL_MS;
+    ina_config.cache_validity_ms = 250U;
+    ina_config.bus_voltage_sensor_id = "ina219_voltage";
+    ina_config.current_sensor_id = "ina219_current";
+
+    memset(&adxl_config, 0, sizeof(adxl_config));
+    adxl_config.bus = st_espidf_i2c_bus(&adxl345_i2c_device);
+    adxl_config.address = CONFIG_SITETWIN_ADXL345_I2C_ADDRESS;
+    adxl_config.range_g = 16U;
+    adxl_config.rate_code = 0x0AU;
+    adxl_config.minimum_window_samples =
+        CONFIG_SITETWIN_ADXL345_MINIMUM_WINDOW_SAMPLES;
+    adxl_config.sample_interval_ms = CONFIG_SITETWIN_ADXL345_SAMPLE_INTERVAL_MS;
+    adxl_config.g_per_lsb = ST_ADXL345_DEFAULT_G_PER_LSB;
+    adxl_config.vibration_sensor_id = "adxl345_vibration";
+
+    memset(&ds18b20_config, 0, sizeof(ds18b20_config));
+    ds18b20_config.bus = st_espidf_onewire_bus(&ds18b20_onewire_bus);
+    ds18b20_config.resolution_bits = CONFIG_SITETWIN_DS18B20_RESOLUTION_BITS;
+    ds18b20_config.sample_interval_ms = CONFIG_SITETWIN_DS18B20_SAMPLE_INTERVAL_MS;
+    ds18b20_config.cache_validity_ms = 250U;
+    ds18b20_config.temperature_sensor_id = "ds18b20_temperature";
+
+    if (st_ina219_init(&ina219_sensor, &ina_config) != 0 ||
+        st_module_instance_init(&ina219_module,
+                                st_ina219_module_driver(&ina219_sensor),
+                                ST_INA219_CHANNEL_COUNT) != 0 ||
+        st_module_instance_attach(&ina219_module, &pod_runtime.registry,
+                                  ina_slots, ST_INA219_CHANNEL_COUNT) != 0 ||
+        st_adxl345_init(&adxl345_sensor, &adxl_config) != 0 ||
+        st_module_instance_init(&adxl345_module,
+                                st_adxl345_module_driver(&adxl345_sensor),
+                                ST_ADXL345_CHANNEL_COUNT) != 0 ||
+        st_module_instance_attach(&adxl345_module, &pod_runtime.registry,
+                                  adxl_slots, ST_ADXL345_CHANNEL_COUNT) != 0 ||
+        st_ds18b20_init(&ds18b20_sensor, &ds18b20_config) != 0 ||
+        st_module_instance_init(&ds18b20_module,
+                                st_ds18b20_module_driver(&ds18b20_sensor),
+                                ST_DS18B20_CHANNEL_COUNT) != 0 ||
+        st_module_instance_attach(&ds18b20_module, &pod_runtime.registry,
+                                  ds18b20_slots, ST_DS18B20_CHANNEL_COUNT) != 0) {
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG,
+             "Equipment Pod ready: INA219 0x%02X and ADXL345 0x%02X on I2C%d, "
+             "DS18B20 on GPIO%d (%d-bit)",
+             CONFIG_SITETWIN_INA219_I2C_ADDRESS,
+             CONFIG_SITETWIN_ADXL345_I2C_ADDRESS,
+             CONFIG_SITETWIN_EQUIPMENT_I2C_CONTROLLER,
+             CONFIG_SITETWIN_DS18B20_GPIO,
+             CONFIG_SITETWIN_DS18B20_RESOLUTION_BITS);
+    return ESP_OK;
+#elif CONFIG_SITETWIN_SHT41_ENABLED
     static const uint8_t registry_slots[ST_SHT41_CHANNEL_COUNT] = {0U, 1U};
     const st_espidf_i2c_device_config_t i2c_config = {
         .controller = CONFIG_SITETWIN_SHT41_I2C_CONTROLLER,
@@ -328,7 +715,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     st_sht41_config_t sensor_config;
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "ENV_01", 1U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "POD_1", 1U);
     result = st_espidf_i2c_device_init(&sht41_i2c_device, &i2c_config);
     if (result != ESP_OK) {
         return result;
@@ -361,7 +748,17 @@ static esp_err_t pod_sensor_runtime_init(void)
 
 static uint8_t pod_sensor_slot(const st_telemetry_record_t *record)
 {
-    return record->reading.sensor_kind == ST_SENSOR_RELATIVE_HUMIDITY_PERCENT ? 1U : 0U;
+    switch (record->reading.sensor_kind) {
+    case ST_SENSOR_RELATIVE_HUMIDITY_PERCENT:
+    case ST_SENSOR_MOTION:
+    case ST_SENSOR_CURRENT_MA:
+        return 1U;
+    case ST_SENSOR_CONTACT:
+    case ST_SENSOR_VIBRATION_RMS_G:
+        return 2U;
+    default:
+        return 0U;
+    }
 }
 
 static int pod_send_telemetry(const st_telemetry_record_t *record)
@@ -393,6 +790,10 @@ static int pod_send_telemetry(const st_telemetry_record_t *record)
 
 static void pod_telemetry_task(void *context)
 {
+#if SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
+    uint32_t logged_adxl_windows = 0U;
+#endif
+
     (void)context;
     for (;;) {
         uint64_t now_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -400,7 +801,29 @@ static void pod_telemetry_task(void *context)
         if (pod_sensor_runtime_ready) {
             st_telemetry_record_t record;
 
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+            st_pending_pod_event_t event;
+            while (xQueueReceive(pod_event_queue, &event, 0U) == pdTRUE) {
+                if (st_pod_runtime_emit_event(&pod_runtime, event.sensor_id,
+                                              event.kind, event.timestamp_ms,
+                                              event.value) != 0) {
+                    ESP_LOGW(TAG, "Dropping %s event: telemetry queue full",
+                             event.sensor_id);
+                }
+            }
+#endif
             st_pod_runtime_tick(&pod_runtime, now_ms);
+#if SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
+            if (st_adxl345_windows_completed(&adxl345_sensor) != logged_adxl_windows) {
+                logged_adxl_windows = st_adxl345_windows_completed(&adxl345_sensor);
+                ESP_LOGI(TAG,
+                         "ADXL345 window %lu: %.4f g RMS from %u samples, quality 0x%08lX",
+                         (unsigned long)logged_adxl_windows,
+                         (double)adxl345_sensor.current_vibration_rms_g,
+                         (unsigned int)adxl345_sensor.current_sample_count,
+                         (unsigned long)adxl345_sensor.current_quality_flags);
+            }
+#endif
             if (pod_joined) {
                 while (st_pod_runtime_next_telemetry(&pod_runtime, &record) == 0) {
                     ESP_LOGI(TAG, "Sending %s sequence %lu quality 0x%08lX",
@@ -458,7 +881,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting SiteTwin pod/end-device image");
     pod_sensor_runtime_ready = pod_sensor_runtime_init() == ESP_OK;
     if (!pod_sensor_runtime_ready) {
-        ESP_LOGE(TAG, "SHT41 sensor runtime initialization failed");
+        ESP_LOGE(TAG, "Pod sensor runtime initialization failed");
     }
     ESP_ERROR_CHECK(xTaskCreate(pod_telemetry_task, "st_pod_tx", 4096, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);
 #endif

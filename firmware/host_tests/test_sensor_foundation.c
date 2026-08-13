@@ -140,7 +140,7 @@ static int fixture_init(sht41_fixture_t *fixture, fake_sht41_bus_t *bus,
     config.cache_validity_ms = cache_validity_ms;
     config.temperature_sensor_id = "sht41_temperature";
     config.humidity_sensor_id = "sht41_humidity";
-    st_pod_runtime_init(&fixture->runtime, ST_POD_ENVIRONMENT, "ENV_01", 42U);
+    st_pod_runtime_init(&fixture->runtime, ST_POD_ENVIRONMENT, "POD_1", 42U);
     if (st_sht41_init(&fixture->sensor, &config) != 0 ||
         st_module_instance_init(&fixture->module,
                                 st_sht41_module_driver(&fixture->sensor),
@@ -202,7 +202,7 @@ static int test_validity_normalization(void)
         st_fake_sensor_t sensor;
         st_sensor_reading_t reading;
 
-        st_sensor_registry_init(&registry, "ENV_01", 1U);
+        st_sensor_registry_init(&registry, "POD_1", 1U);
         st_fake_sensor_init(&sensor, "quality_test", "module-quality",
                             ST_SENSOR_TEMPERATURE_C, ST_UNIT_CELSIUS, 1000U, 20.0F);
         sensor.quality_flags = invalid_flags[index] | ST_QUALITY_VALID | ST_QUALITY_BATTERY_LOW;
@@ -219,7 +219,7 @@ static int test_validity_normalization(void)
         st_fake_sensor_t sensor;
         st_sensor_reading_t reading;
 
-        st_sensor_registry_init(&registry, "ENV_01", 1U);
+        st_sensor_registry_init(&registry, "POD_1", 1U);
         st_fake_sensor_init(&sensor, "warming_test", "module-warming",
                             ST_SENSOR_TEMPERATURE_C, ST_UNIT_CELSIUS, 1000U, 20.0F);
         sensor.quality_flags = ST_QUALITY_BATTERY_LOW | ST_QUALITY_MOUNTING_CHANGED;
