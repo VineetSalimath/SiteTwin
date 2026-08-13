@@ -51,6 +51,24 @@ Routine telemetry is change-driven rather than sample-driven. Pods suppress valu
 
 ## Hardware Integration Status
 
+The latest KiCad-derived hardware-team authority resolves the final-board
+topology as follows:
+
+- SHT41 is the Type 1 environmental sensor at I2C address `0x44`.
+- DS18B20 is Type 5 and carries the 10 kOhm identification code.
+- The four-port board uses a CD74HC4052M96 DATA mux; its common non-I2C DATA
+  path is `DATA_COMMON` on ESP32-C6 GPIO3.
+- ESP32-C6 GPIO19 drives one shared external buzzer/LED low-side branch. The
+  two loads are not independently controllable.
+- Pod 3 remains monitoring/inference only. Motor-current cut and motor control
+  are prohibited.
+
+This topology supersedes earlier TMP36, DS18B20-as-legacy-only, and
+unfinalized-mux statements. The universal-port scanner, physical hot-swap, mux
+control, and live alarm-output implementation remain gated pending electrical
+validation. Development-profile wiring, including Pod 3 DS18B20 on GPIO0, is
+not a final-board GPIO claim.
+
 ## Zigbee Deployment Status
 
 - ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3 are the tested baseline.
@@ -58,12 +76,8 @@ Routine telemetry is change-driven rather than sample-driven. Pods suppress valu
 - The pod repeatedly sends the real 30-byte SiteTwin payload through custom cluster `0xFC00`; the gateway accepts it.
 - The temporary health producer will be replaced by real sensor-driver records without changing the radio payload path.
 
-Confirmed after the latest supervisor/team meeting:
-
-- the pod development board in hand is the Espressif ESP32-C6-DevKitC-1
-- the universal module concept remains a six-contact physical connector carrying supply, ground, shared I2C SDA/SCL, and two auxiliary signal positions
-- analogue resistor-coded module identification is being evaluated for one auxiliary line because non-I2C modules do not have protocol-level identity
-- reducing identification-divider standby current through switched/gated identification circuitry is a design objective
-- the exact mux topology, GPIO allocation, port-count expansion scheme, and immediate hot-swap wake circuitry are not yet locked and must remain marked as pending until the team confirms them
-
-Do not implement assumptions about ID-only versus ID+DATA multiplexing, a specific mux channel count, a four-versus-six-port final PCB, comparator wake circuitry, or exact resistor voltage bands until those choices are confirmed.
+The firmware integration still requires measured identification acceptance
+bands, validated hot-swap electrical behavior, and the complete GPIO19/Q2/load
+evidence before those final-board paths can be enabled. Nominal component
+identity does not by itself establish safe ADC thresholds, output polarity,
+PWM limits, or load limits.

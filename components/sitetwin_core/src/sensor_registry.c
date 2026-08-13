@@ -2,6 +2,10 @@
 
 #include <string.h>
 
+#define ST_QUALITY_INVALID_MASK                                                            \
+    (ST_QUALITY_CRC_FAILED | ST_QUALITY_OUT_OF_RANGE | ST_QUALITY_SENSOR_MISSING |         \
+     ST_QUALITY_STALE)
+
 static void copy_string(char *destination, size_t capacity, const char *source)
 {
     if (capacity == 0U) {
@@ -155,11 +159,13 @@ size_t st_sensor_registry_tick(st_sensor_registry_t *registry, uint64_t now_ms,
         reading->unit = sample.unit;
         reading->sequence = ++port->next_sequence;
         reading->boot_id = registry->boot_id;
-        reading->uptime_ms = now_ms;
+        reading->uptime_ms = sample.acquired_at_valid != 0U ? sample.acquired_at_ms : now_ms;
         reading->value = sample.value;
         reading->quality_flags = sample.quality_flags;
-        if ((reading->quality_flags & (ST_QUALITY_CRC_FAILED | ST_QUALITY_SENSOR_MISSING)) == 0U) {
+        if ((reading->quality_flags & ST_QUALITY_INVALID_MASK) == 0U) {
             reading->quality_flags |= ST_QUALITY_VALID;
+        } else {
+            reading->quality_flags &= ~ST_QUALITY_VALID;
         }
     }
 

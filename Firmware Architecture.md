@@ -1,7 +1,7 @@
 ---
 title: Firmware Architecture
 project: SiteTwin
-status: Hardware Zigbee bring-up complete
+status: Existing sensor delta reconciled; final-board controls gated
 tags:
   - sitetwin
   - firmware
@@ -18,6 +18,22 @@ For a non-technical walkthrough of the same architecture, start with [[SiteTwin 
 ## Shared Codebase
 
 The software structure is one shared ESP-IDF codebase with pod profiles, not four unrelated firmware projects. The portable core has now been implemented in C without ESP-IDF dependencies, allowing its behavior to be compiled and stress-tested on the development computer before hardware is available.
+
+## Final-Board Contract Boundary
+
+The current hardware-team contract fixes SHT41 at I2C address `0x44` and
+DS18B20 as Type 5 with the 10 kOhm identification code. The four-port final
+board uses a CD74HC4052M96 for non-I2C DATA selection, with `DATA_COMMON` on
+ESP32-C6 GPIO3. GPIO19 drives one shared buzzer/LED low-side branch; LED and
+buzzer are not independent capabilities. Pod 3 remains monitoring/inference
+only: no firmware may cut or control the motor.
+
+The current pod profiles are fixed development compositions. They do not
+implement final-board module identification, DATA-mux selection, physical
+hot-swap, or live shared-indicator control. Those paths remain feature-gated
+until the required electrical evidence is reviewed. In particular, the
+verified Pod 3 DS18B20-on-GPIO0 prototype must not be mistaken for the final
+universal-board DATA route.
 
 ## Implemented Portable Core
 
@@ -52,14 +68,15 @@ separate images in `build_pod` and `build_gateway`: the pod is a Zigbee End Devi
 a Zigbee Coordinator. The pod sends the implemented fixed 30-byte SiteTwin payload through custom
 cluster `0xFC00`, command `0x01`; the gateway validates it with the existing portable runtime.
 
-This was deployed and observed on two ESP32-C6-DevKitC-1 boards. The pod restored its network and
-sent periodic SiteTwin health frames; the gateway logged `ingress result 0` for each frame. The
-temporary health record is a bring-up source only. Real sensor drivers will replace it without
-changing the queue, codec, or Zigbee transport.
+This was first deployed and observed on two ESP32-C6-DevKitC-1 boards using
+health frames. The same queue, codec, and Zigbee transport now carry real
+sensor records from all three pod profiles; the temporary health source is no
+longer the active sensor-integration milestone.
 
 ## Common Task Model
 
-The ESP-IDF deployment remains task based using FreeRTOS. The portable core does not create tasks itself; future composition code will call it from these common tasks:
+The ESP-IDF deployment is task based using FreeRTOS. The portable core does not
+create tasks itself; composition code invokes it from ESP-IDF task context:
 
 - pod manager
 - acquisition
@@ -111,7 +128,7 @@ This is especially important for SCD41 warm-up, SGP40 compensation status, and A
 
 ## Per-Pod Runtime Shape
 
-- Environment pod: periodic scheduler, humidity and temperature first, then compensated VOC, then CO2 on its own cadence
+- Environment pod: this I1 image composes SHT41 temperature/humidity; SCD41 and SGP40 remain separate production-driver work
 - Activity and access pod: interrupt-driven PIR and reed path, with BH1750 on a slower periodic cadence
 - Equipment pod: slow path for DS18B20 and INA219, fast path for ADXL345 FIFO and derived vibration features
 
@@ -146,10 +163,9 @@ The sensor registry increments a sequence number whenever a reading is produced.
 
 ## Remaining Firmware Work
 
-- real board drivers for I2C, GPIO, PIR or reed interrupts, and ADXL345 FIFO
-- sensor-to-runtime adapters that queue real readings in place of the development health record
-- gateway IEEE/pod/sensor-slot registry provisioning rather than the current bring-up labels
-- UART forwarding from the Zigbee gateway ESP to the server/Wi-Fi ESP
+- collect a controlled ADXL345 baseline/threshold dataset
+- implement the final module-identification/hot-swap runtime and dynamic driver selection only after its electrical validation gate is satisfied
+- replace fixed gateway node/slot mappings with provisioned identity data
 - commissioning allow-listing, application acknowledgement, retry policy, and production security policy
 - watchdog and stack-margin measurement on the final workload
 - deep sleep and per-port sensor power switching

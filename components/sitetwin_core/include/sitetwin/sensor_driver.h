@@ -16,6 +16,8 @@ typedef struct {
     float value;
     st_unit_t unit;
     uint32_t quality_flags;
+    uint64_t acquired_at_ms;
+    uint8_t acquired_at_valid;
 } st_driver_sample_t;
 
 typedef struct {

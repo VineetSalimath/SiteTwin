@@ -4,8 +4,8 @@ aliases:
   - SiteTwin
   - SiteTwin Overview
 project: SiteTwin
-status: Zigbee firmware deployed; sensor integration pending
-updated: 2026-07-31
+status: Three fixed pod profiles integrated; final-board controls gated
+updated: 2026-08-14
 tags:
   - sitetwin
   - hub
@@ -51,11 +51,11 @@ The project is no longer "one smart node with every sensor attached." The strong
 
 ### Latest deployed milestone
 
-Two ESP32-C6-DevKitC-1 boards now run the real SiteTwin Zigbee transport. The gateway is a
-Coordinator, the pod is an End Device, and the pod repeatedly sends the fixed 30-byte SiteTwin payload
-through custom cluster `0xFC00`. The gateway accepts each frame with `ingress result 0`. ESP-IDF v5.5.4
-and ESP Zigbee SDK v2.0.3 are the tested baseline. Sensor drivers, UART forwarding to the server/Wi-Fi
-ESP, and production reliability/security policy remain next work.
+The three numbered fixed-development profiles now use reconciled ESP-IDF
+sensor compositions: SHT41 on Pod 1; BH1750, PIR, and reed on Pod 2; and
+INA219, ADXL345, and DS18B20 on Pod 3. The I1 host suite and all three ESP32-C6
+profile builds pass. This workstream does not change the gateway, Raspberry
+Pi, ThingsBoard, or command-actuation path.
 
 Implemented and passing host tests:
 
@@ -76,11 +76,12 @@ For a step-by-step explanation of how these pieces call each other, see [[SiteTw
 
 Not yet implemented or hardware-validated:
 
-- real ESP-IDF I2C, GPIO, interrupt, Zigbee, ADC, and power-management adapters
-- FreeRTOS task composition and deep-sleep behavior on the ESP32-C6-DevKitC-1
-- ESP Zigbee custom-cluster adapter, commissioning, MQTT batching, persistent outage buffer, and Raspberry Pi services
+- controlled vibration threshold characterization
+- ADC/module-identification, CD74HC4052M96 DATA-mux, and power-management adapters for the final universal-port hardware
+- live GPIO19 shared buzzer/LED control, pending electrical validation
+- deep-sleep behavior, MQTT batching, and persistent outage buffering
 - real sensor characterization and final deadband tuning
-- final universal-port ID multiplexing and immediate hot-swap detection circuitry; these remain team decisions and must not be treated as locked architecture
+- final universal-port runtime and immediate hot-swap behavior; the board topology is locked, but measured electrical behavior remains a prerequisite
 
 ## Pod Map
 
@@ -91,11 +92,10 @@ Not yet implemented or hardware-validated:
 
 ## Next Practical Work
 
-- verify the exact ESP32-C6-DevKitC-1 pin map and create a board-level GPIO assignment before wiring modules
-- install and pin the ESP-IDF and ESP Zigbee SDK versions used for hardware bring-up
-- bring up the SHT41 through a thin ESP-IDF I2C driver implementing the existing `probe` and `sample` interface
+- collect a report-ready multi-condition vibration dataset for Pod 3
+- collect controlled idle/normal/induced ADXL345 datasets before selecting a threshold
 - characterize ADC behavior, resistor-ID tolerances, sensor noise, warm-up time, current draw, and useful sampling cadence on real hardware
-- confirm the final universal-port ID multiplexing, power-gating, and hot-swap architecture with the team before implementing it
+- validate the locked universal-port ID, power, mux, hot-swap, and shared-indicator electrical behavior before implementing it
 - add gateway MQTT batching and simulated Wi-Fi outage recovery
 - design commissioning, allow-listing, and sensor-slot registration messages
 - validate gateway reliability through the tests listed in [[Validation and Implementation Plan]]

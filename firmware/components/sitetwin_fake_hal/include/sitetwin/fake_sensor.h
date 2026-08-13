@@ -12,6 +12,7 @@ typedef struct {
     uint64_t warm_until_ms;
     float value;
     float increment_per_sample;
+    uint32_t quality_flags;
     st_module_metadata_t metadata;
 } st_fake_sensor_t;
 

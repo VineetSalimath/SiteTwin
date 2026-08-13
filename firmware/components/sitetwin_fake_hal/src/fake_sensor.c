@@ -47,7 +47,12 @@ static st_driver_result_t fake_sample(void *context, uint64_t now_ms, st_driver_
 
     sample->value = sensor->value;
     sample->unit = sensor->metadata.unit;
-    sample->quality_flags = now_ms < sensor->warm_until_ms ? ST_QUALITY_WARMING_UP : 0U;
+    sample->quality_flags = sensor->quality_flags;
+    if (now_ms < sensor->warm_until_ms) {
+        sample->quality_flags |= ST_QUALITY_WARMING_UP;
+    }
+    sample->acquired_at_ms = now_ms;
+    sample->acquired_at_valid = 1U;
     sensor->value += sensor->increment_per_sample;
     return ST_DRIVER_READY;
 }

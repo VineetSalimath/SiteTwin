@@ -1,8 +1,8 @@
 ---
 title: Pod and Sensor Strategy
 project: SiteTwin
-status: Firmware policy implemented; hardware interface under bring-up
-updated: 2026-07-29
+status: Three fixed pod profiles implemented; universal hardware interface under bring-up
+updated: 2026-08-13
 tags:
   - sitetwin
   - hardware
@@ -109,9 +109,23 @@ Behavior:
 
 Native interfaces:
 
-- ADXL345: digital I2C or SPI capable; the final board connection remains to be selected
-- DS18B20: digital 1-Wire
+- ADXL345: digital I2C at `0x53` on the current prototype bus
+- DS18B20: digital 1-Wire on current prototype GPIO0, externally powered, with
+  an approximately 4.7 kΩ DQ-to-3.3 V pull-up
 - INA219: digital I2C; its internal analogue measurement is converted before the ESP receives the data
+
+The fixed Pod 3 software composition is complete: INA219 is on slots 0/1,
+ADXL345 vibration RMS is on slot 2, and DS18B20 temperature is on slot 3.
+INA219, ADXL345, and DS18B20 are physically verified end to end. The DS18B20
+test confirmed the powered GPIO0 probe and external DQ pull-up arrangement.
+This fixed prototype composition does not itself implement automatic
+universal-port identification.
+
+On the final board DS18B20 is Type 5 with the 10 kOhm ID code. Its non-I2C
+DATA path is selected by CD74HC4052M96 and reaches `DATA_COMMON` on GPIO3, so
+the fixed GPIO0 prototype must not be used as final-board routing. GPIO19 is a
+single shared buzzer/LED low-side branch and remains electrically gated. Pod 3
+has no motor-control or motor-current-cut capability.
 
 ## Shared-Bus Constraint
 

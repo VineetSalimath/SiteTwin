@@ -2,7 +2,7 @@
 title: Hardware Bring-Up and Open Decisions
 project: SiteTwin
 status: Active hardware integration
-updated: 2026-07-31
+updated: 2026-08-14
 tags:
   - sitetwin
   - hardware
@@ -12,94 +12,75 @@ tags:
 
 # Hardware Bring-Up and Open Decisions
 
-This note is the handoff point for Codex and the project team as SiteTwin moves from host-tested portable firmware to physical hardware. It intentionally separates confirmed facts from architecture choices that still require team approval.
+This note is the handoff point for SiteTwin hardware-facing firmware. It
+separates the locked KiCad-derived board contract from electrical evidence
+that is still required before final-board control paths can be enabled.
 
-## Confirmed
+## Confirmed hardware contract
 
-- Physical hardware has been acquired.
-- The pod development board in hand is the Espressif ESP32-C6-DevKitC-1.
-- SiteTwin retains the three logical pod profiles: environment, activity/access, and equipment.
-- The universal-module concept uses a six-contact physical interface carrying VCC, GND, shared SDA/SCL, and two auxiliary signal contacts.
-- Most selected sensor ICs are digital I2C devices; PIR and reed/contact are digital GPIO-style signals; DS18B20 uses 1-Wire; ADXL345 supports I2C/SPI.
-- A resistor-coded analogue identification mechanism is being evaluated so non-I2C modules can be identified independently of their native data protocol.
-- Identification circuitry should be duty-cycled or otherwise gated so that a voltage-divider ID path does not impose unnecessary continuous battery drain.
-- The existing portable C sensor-driver abstraction, registry, reporting policy, telemetry queues, Zigbee codec, and gateway core remain valid and should be preserved while hardware-specific adapters are added.
-- Two ESP32-C6-DevKitC-1 boards have formed a SiteTwin Zigbee network and repeatedly delivered the real 30-byte SiteTwin payload from pod to gateway.
-- ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3 are the currently tested software baseline.
+- The pod MCU is ESP32-C6; ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3 are the
+  currently tested software baseline.
+- The final universal board has four ports.
+- Type 1 is SHT41 at I2C address `0x44`. Any SHT40 label is a documentation or
+  Wokwi-label defect.
+- Type 5 is DS18B20 with the 10 kOhm identification code. TMP36 is not the
+  current Type 5 contract.
+- U4 is CD74HC4052M96. It selects the non-I2C DATA path and presents
+  `DATA_COMMON` to ESP32-C6 GPIO3.
+- GPIO19 drives R36/Q2 (2N7002) for one shared external buzzer/LED low-side
+  alarm branch. LED and buzzer are not independently controllable.
+- Pod 3 is monitoring/inference only. INA219 and ADXL345 may provide evidence
+  or alarm inputs, but motor-current cut and motor control are prohibited.
+- The stable development identities are `POD_1`, `POD_2`, and `POD_3`.
 
-## Confirmed Firmware Direction
+The fixed development pods are not final-board routing evidence. In
+particular, the physically verified Pod 3 DS18B20 path on GPIO0 with an
+external approximately 4.7 kOhm DQ pull-up remains valid prototype work, but
+the final Type 5 DATA route is through U4 to GPIO3.
 
-The hardware layer should hide board-specific operations behind small interfaces so portable policy does not depend on muxes, ADC registers, I2C transactions, or GPIO wiring.
+## Firmware boundary
 
-Likely board-layer responsibilities include:
+The portable drivers, logical-channel adapters, module lifecycle, registry,
+reporting policy, queues, Zigbee codec, and gateway framing remain reusable.
+The current I1 profiles compose fixed development sensors only.
 
-- initialize GPIO/I2C/ADC
-- read a port's identification signal
-- enable/disable ID measurement power
-- detect insertion/removal events or request periodic re-scan
-- instantiate the correct sensor driver after identification
-- provide real `probe()` and `sample()` implementations
-- attach/detach drivers from the existing sensor registry
+No universal-port scanner, physical insertion/removal handler, ID classifier,
+DATA-mux controller, or live shared-alarm-indicator driver is enabled. Those
+paths remain feature-gated. The portable `board_port` and `local_output`
+interfaces describe boundaries only; they do not prove electrical behavior.
 
-The first straightforward real-sensor bring-up remains SHT41 over I2C because it can exercise the path from real sensor driver through the already-tested portable core.
+## Remaining hardware evidence required
 
-## Decisions Still Open — Do Not Hard-Code Yet
+- Calibrated ADC samples and non-overlapping acceptance bands for every ID
+  resistor, including Type 5's nominal 10 kOhm code, across supply, resistor,
+  temperature, connector, ADC, and mux tolerances.
+- Complete hot-swap/power schematic evidence establishing active polarities,
+  sequencing, settle times, interrupt behavior, and safe insertion/removal
+  behavior before universal-port runtime work.
+- Bench evidence for CD74HC4052M96 channel truth, enable behavior, on-resistance,
+  leakage, voltage range, and DS18B20 timing/signal integrity through U4 to
+  GPIO3.
+- Complete Q2/R36/buzzer/LED schematic and load data establishing GPIO19 active
+  polarity, safe PWM frequency/duty-cycle envelope, branch current, transistor
+  dissipation, and external load limits.
+- Evidence for how duplicate fixed-address I2C modules are isolated or ruled
+  out on the shared universal connector bus.
 
-### Port count and expansion
+Nominal part numbers and resistor codes must not be converted into invented
+ADC thresholds, PWM values, or load limits.
 
-The team is considering a four-port baseline with an upgrade path, but the final physical port count and exact reserved GPIO budget are not yet confirmed. Do not make the firmware assume four, six, eight, or sixteen physical ports. Keep configurable compile-time/runtime limits where practical.
+## Current implementation status
 
-### Identification multiplexing
+- The 30-byte SiteTwin Zigbee telemetry path is deployed on ESP32-C6.
+- The sensor runtime supports stable numbered pod identities.
+- This I1 line composes SHT41 for `POD_1`; BH1750, PIR, and reed for `POD_2`;
+  and INA219, ADXL345, and DS18B20 for `POD_3`.
+- SCD41 and SGP40 remain archived Arduino/reference work in this integration;
+  they are not composed ESP-IDF drivers here.
+- Physical final-board discovery, hot-swap, and shared-indicator behavior are
+  intentionally absent.
 
-Several designs have been discussed:
-
-- dedicated ID ADC per port
-- multiplex ID lines only onto one ADC
-- multiplex both ID and auxiliary DATA lines
-
-No topology is finalized. The software should therefore model `port_index -> identify/read` rather than expose mux-channel assumptions to the sensor registry.
-
-### Power gating
-
-The objective of disconnecting the ID voltage-divider path outside active scans is agreed in principle. The exact implementation — MOSFET topology versus dedicated low-Iq load switch, shared versus per-port control — remains an electrical design decision.
-
-Do not conflate ID-divider power gating with switching the main sensor VCC. These solve different power problems.
-
-### Immediate hot-swap detection
-
-Identification and change detection are separate functions. Possible change-detection approaches include periodic re-scan, GPIO/interrupt-based detection, comparator-based detection, or an interrupt-capable GPIO expander. The previously drafted shared comparator/diode-OR wake proposal is not yet a locked design and should not be implemented without review.
-
-### I2C address collisions
-
-Shared SDA/SCL is attractive for GPIO efficiency, but two identical fixed-address I2C modules on different universal ports cannot be distinguished by resistor ID alone. The final design must decide whether duplicate identical modules are a requirement and, if so, use an I2C switch/multiplexer or another isolation/address-management strategy.
-
-### ADC ID bands
-
-Do not assign final sensor-ID voltages or large arbitrary tolerance windows yet. The mapping must be characterized on real hardware using calibrated ADC readings and measured variation from:
-
-- resistor tolerances
-- 3.3 V rail variation
-- ADC conversion/calibration error
-- temperature
-- connector/contact resistance
-- noise
-- any analogue mux on-resistance/leakage
-
-Use multiple ADC samples and robust classification bands only after bench data exists.
-
-## Immediate Bring-Up Sequence
-
-1. Complete: pin ESP-IDF v5.5.4 and ESP Zigbee SDK v2.0.3, then prove pod-to-gateway SiteTwin telemetry on two ESP32-C6 boards.
-2. Verify and document the actual GPIO assignment used on the ESP32-C6-DevKitC-1 prototype.
-3. Prove a basic GPIO and I2C application on the development board.
-4. Implement the real SHT41 driver behind `st_sensor_driver_t`.
-5. Run the existing pod runtime with a real SHT41 while keeping the rest of the pipeline unchanged.
-6. Characterize sensor current, warm-up, noise, and practical sample cadence.
-7. Prototype the resistor-coded ID circuit on a breadboard and capture ADC distributions for each proposed ID resistor.
-8. After team confirmation, implement the selected port/mux/power-gating abstraction.
-9. Add physical insertion/removal testing only after the identification path is stable.
-10. Continue Zigbee, MQTT, and gateway hardware integration after local sensor acquisition is reliable.
-
-## Guidance for Codex
-
-Treat this file plus `Architecture Baseline.md` and `Pod and Sensor Strategy.md` as the current architecture source of truth. Do not infer that discussion-stage mux, six-port, comparator, or exact pin-allocation proposals are approved. Ask before changing portable core contracts solely to accommodate one unconfirmed hardware topology.
+Treat this file together with `Architecture Baseline.md` and `Firmware
+Architecture.md` as the current firmware-facing hardware authority. Older
+TMP36, independently controlled LED/buzzer, unfinalized DATA-mux, or motor
+actuation statements are superseded.
