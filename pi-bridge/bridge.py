@@ -93,6 +93,28 @@ def bounded_int(value, minimum, maximum):
     return value
 
 
+def normalize_rpc_params(params):
+    if params is None or params == "":
+        return {}
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except json.JSONDecodeError as exc:
+            raise ValueError("params must contain valid JSON") from exc
+    if not isinstance(params, dict):
+        raise ValueError("params must be a JSON object")
+    return params
+
+
+def normalize_command_id(command_id):
+    if isinstance(command_id, str) and command_id.isdecimal():
+        command_id = int(command_id)
+    if (isinstance(command_id, bool) or not isinstance(command_id, int) or
+            command_id <= 0 or command_id > MAX_JSON_INTEGER):
+        raise ValueError("command id must be a positive JSON-safe integer")
+    return command_id
+
+
 def on_server_side_rpc(gateway, content):
     del gateway
     global hivemq_client
@@ -100,17 +122,27 @@ def on_server_side_rpc(gateway, content):
     rpc_data = content.get("data", {})
     command_id = rpc_data.get("id")
     method = rpc_data.get("method")
-    params = rpc_data.get("params") or {}
-    if (isinstance(command_id, bool) or not isinstance(command_id, int) or
-            command_id <= 0 or command_id > MAX_JSON_INTEGER or not device_name or
-            method not in SUPPORTED_COMMANDS):
+    params = rpc_data.get("params")
+    log.info(
+        "Received RPC: device=%r command_id=%r method=%r params_type=%s params=%r",
+        device_name, command_id, method, type(params).__name__, params,
+    )
+    try:
+        command_id = normalize_command_id(command_id)
+    except ValueError:
         if device_name and command_id is not None:
+            send_rpc_reply(device_name, command_id, {"status": "rejected", "reason": "invalid_syntax"})
+        return
+    if not device_name or method not in SUPPORTED_COMMANDS:
+        if device_name:
             send_rpc_reply(device_name, command_id, {"status": "rejected", "reason": "invalid_syntax"})
         return
     if device_name != ENVIRONMENT_POD_ID:
         send_rpc_reply(device_name, command_id, {"status": "rejected", "reason": "unsupported"})
         return
-    if not isinstance(params, dict):
+    try:
+        params = normalize_rpc_params(params)
+    except ValueError:
         send_rpc_reply(device_name, command_id, {"status": "rejected", "reason": "invalid_syntax"})
         return
 
