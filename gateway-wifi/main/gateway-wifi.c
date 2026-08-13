@@ -22,6 +22,10 @@ static EventGroupHandle_t s_wifi_event_group;
 
 static esp_mqtt_client_handle_t s_mqtt_client = NULL;
 static bool s_mqtt_connected = false;
+static char s_command_topic[128];
+static char s_command_payload[768];
+static size_t s_command_payload_used;
+static bool s_command_payload_discard;
 
 /* ---------- Wi-Fi ---------- */
 
@@ -79,6 +83,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected to HiveMQ");
         s_mqtt_connected = true;
+        esp_mqtt_client_subscribe(s_mqtt_client, "sitetwin/pods/+/commands", 1);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "MQTT disconnected");
@@ -86,6 +91,47 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT publish acknowledged, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_DATA:
+        if (event->current_data_offset == 0) {
+            size_t topic_length = event->topic_len < (int)sizeof(s_command_topic) - 1
+                                      ? (size_t)event->topic_len
+                                      : sizeof(s_command_topic) - 1U;
+            memcpy(s_command_topic, event->topic, topic_length);
+            s_command_topic[topic_length] = '\0';
+            s_command_payload_used = 0U;
+            s_command_payload_discard = event->total_data_len < 0 ||
+                                        (size_t)event->total_data_len >=
+                                            sizeof(s_command_payload);
+            if (s_command_payload_discard) {
+                ESP_LOGW(TAG, "Discarding oversized command payload");
+            }
+        }
+        if (s_command_payload_discard) {
+            if (event->current_data_offset + event->data_len == event->total_data_len) {
+                s_command_payload_discard = false;
+                s_command_payload_used = 0U;
+            }
+            break;
+        }
+        if (event->data_len > 0 &&
+            s_command_payload_used + (size_t)event->data_len < sizeof(s_command_payload)) {
+            memcpy(s_command_payload + s_command_payload_used, event->data,
+                   (size_t)event->data_len);
+            s_command_payload_used += (size_t)event->data_len;
+        } else if (event->data_len != 0) {
+            s_command_payload_used = 0U;
+            s_command_payload_discard = true;
+            ESP_LOGW(TAG, "Discarding malformed command fragments");
+            break;
+        }
+        if (event->current_data_offset + event->data_len == event->total_data_len) {
+            s_command_payload[s_command_payload_used] = '\0';
+            if (gateway_pipeline_submit_command(s_command_topic, s_command_payload) != 0) {
+                ESP_LOGW(TAG, "Rejected MQTT command on %s", s_command_topic);
+            }
+            s_command_payload_used = 0U;
+        }
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT error event");

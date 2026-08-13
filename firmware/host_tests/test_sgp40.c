@@ -193,7 +193,7 @@ static int fixture_init(sgp40_fixture_t *fixture,
     config.compensation_provider = fake_compensation_provider;
     config.compensation_context = compensation;
     config.voc_index_sensor_id = "sgp40_voc_index";
-    st_pod_runtime_init(&fixture->runtime, ST_POD_ENVIRONMENT, "ENV_01", 88U);
+    st_pod_runtime_init(&fixture->runtime, ST_POD_ENVIRONMENT, "POD_1", 88U);
     if (st_sgp40_init(&fixture->sensor, &config) != 0 ||
         st_module_instance_init(&fixture->module,
                                 st_sgp40_module_driver(&fixture->sensor),

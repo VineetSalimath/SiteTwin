@@ -1,6 +1,8 @@
 idf_component_register(SRCS
+                       "src/command.c"
                        "src/contracts.c"
                        "src/gateway_frame.c"
+                       "src/gateway_identity.c"
                        "src/gateway_json.c"
                        "src/gateway_processor.c"
                        "src/gateway_registry.c"

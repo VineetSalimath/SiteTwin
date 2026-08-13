@@ -207,7 +207,7 @@ static int fixture_init(scd41_fixture_t *fixture, fake_scd41_bus_t *bus,
     config.measurement_mode = mode;
     config.poll_interval_ms = poll_interval_ms;
     config.co2_sensor_id = "scd41_co2";
-    st_pod_runtime_init(&fixture->runtime, ST_POD_ENVIRONMENT, "ENV_01", 77U);
+    st_pod_runtime_init(&fixture->runtime, ST_POD_ENVIRONMENT, "POD_1", 77U);
     if (st_scd41_init(&fixture->sensor, &config) != 0 ||
         st_module_instance_init(&fixture->module,
                                 st_scd41_module_driver(&fixture->sensor),

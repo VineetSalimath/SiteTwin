@@ -5,6 +5,11 @@ ThingsBoard ingestion. It is the counterpart to `SITETWIN_ZIGBEE_BRINGUP.md`, wh
 covers the Zigbee side up to the point where a validated 30-byte SiteTwin payload is
 accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
 
+The bidirectional command/acknowledgement foundation is implemented and all ESP32-C6
+targets compile. It has not been flashed or physically tested. The previously verified
+telemetry direction remains the only physically verified direction. See
+`docs/pod-command-and-actuation.md` for contracts, safety rules, and the later bench plan.
+
 ## Confirmed
 
 - ESP32-C6-DevKitC-1 (Wi-Fi role) connects to Wi-Fi, establishes a TLS (MQTTS, port 8883)
@@ -36,9 +41,9 @@ accepted by `st_gateway_runtime_t` on the Zigbee-side gateway.
 
 ## Confirmed but hardcoded for now
 
-- The Zigbee-side gateway currently synthesizes `pod_id` directly from the Zigbee short
-  address (e.g. `POD_1234`) rather than through `gateway_registry` lookups. This board's
-  test data source matches that convention (see "Pod/sensor naming scheme" below).
+- Environment sensor slots 0-3 are mapped to milestone ID `ENV_01` on the Wi-Fi ESP.
+  Other slots retain the technical `POD_<short-address>` fallback. Persistent multi-Pod
+  commissioning and identity remain open.
 - The 30-byte SiteTwin telemetry payload consumed by the test data source
   (`gateway_pipeline.c`) is hand-constructed in firmware for testing (via
   `st_zigbee_telemetry_encode`) rather than received over UART. This exercises the same
@@ -84,27 +89,21 @@ The deployed one-way link is Zigbee gateway GPIO4 (UART1 TX) to Wi-Fi gateway GP
 (UART1 RX), with shared GND, at 115200 baud 8N1. The physical connection and complete
 Zigbee-to-HiveMQ delivery path were verified on ESP32-C6-DevKitC-1 boards.
 
-### Pod/sensor naming scheme — Resolved
+### Pod/sensor naming scheme — Environment Pod milestone decision
 
-Decided: standardize on the Zigbee-side gateway's technical identifier scheme
-(`POD_1234`, `SLOT_0`) rather than introducing a human-readable naming/mapping layer
-(`ENV_01`, `env_temperature`). Rationale: a pod's identity (tied to its Zigbee address)
-is not strictly bound to its current role or sensor configuration — the same physical
-board could be repurposed with a different sensor module — so encoding role semantics
-into the identifier itself is misleading. If a human-readable label is needed later
-(e.g. for dashboard presentation), it should be added as a separate attribute, not
-baked into the identifier.
-
-This board's test data source (`gateway_pipeline.c`) matches: `TEST_POD_ID`/
-`TEST_SENSOR_ID` default to `POD_1234`/`SLOT_0`. Verified end to end — ThingsBoard
-correctly auto-creates a `POD_1234` device with a `SLOT_0` telemetry key.
+The command milestone uses `ENV_01` as the stable logical identity for Environment Pod
+sensor slots 0-3 and command targeting. A replay-safe command cannot safely target a
+transient Zigbee short address. The coordinator learns the current short address from
+accepted telemetry; none is compiled in. The test generator retains
+`POD_1234`/`SLOT_0`. General identity registration for multiple Pods is not resolved by
+this single-profile milestone.
 
 ### Heartbeat / health record handling — Resolved
 
-Pod health frames (`record_class = HEALTH`, `sensor_kind = UNKNOWN`, `value = 1.0`) are
-sent by the Zigbee-side pod image every 15 seconds as a bring-up signal, and this
-board's test data source can synthesize the same shape via the `send_heartbeat` console
-command.
+The Wi-Fi test source can synthesize a health frame with `send_heartbeat`. The current
+Environment Pod sensor runtime does not generally emit a dedicated 15-second HEALTH
+record; ordinary valid telemetry still refreshes activity. Do not treat the test
+generator's health cadence as implemented Pod behaviour.
 
 `bridge.py` detects `record_class == "health"` and forwards it as
 `{sensor_id}_heartbeat: true` (plus `_sequence`, `_boot_id`, `_uptime_ms`) instead of
@@ -210,6 +209,31 @@ acknowledged by the MQTT broker.
 - The physical UART transport is validated, but malformed-frame coverage, truncated-frame
   recovery, and sustained-operation behaviour still need explicit tests.
 
+## Bidirectional command and acknowledgement path
+
+The former simulated-command proposal has been replaced by source-level real transport:
+
+1. `bridge.py` registers the ThingsBoard gateway RPC callback, publishes a structured
+   command to `sitetwin/pods/{pod_id}/commands`, and keeps the RPC pending.
+2. The Wi-Fi ESP subscribes to that topic, validates the supported schema, writes a real
+   `ST_GATEWAY_MESSAGE_COMMAND` CRC-protected UART frame, and may publish non-terminal
+   `queued` status.
+3. The coordinator UART RX task decodes the frame and sends custom cluster `0xFC00`,
+   command `0x02`, to the learned Environment Pod short address.
+4. The Pod callback enqueues the command. The portable command runtime checks target,
+   capability, expiry window, bounds, revision and duplicate history; persists accepted
+   state; then executes or rejects it from the Pod task.
+5. The Pod sends command `0x03` with a structured terminal acknowledgement. Coordinator
+   forwards it as `ST_GATEWAY_MESSAGE_COMMAND_ACK`; Wi-Fi publishes it to
+   `sitetwin/pods/{pod_id}/command_acks`; only then does the Pi close the RPC.
+
+`delivered` is reserved and is not emitted because no APS delivery-confirmation hook is
+implemented. A sleepy End Device can delay downlink until a poll window. Pi timeout and
+known transport failures close RPC honestly as `failed`; `queued` never means executed.
+
+All code in this section is host-tested or ESP32-C6 compile-tested as detailed in
+`docs/pod-command-and-actuation.md`. None of the reverse path has been physically run.
+
 ## Repository layout
 
 ```
@@ -240,8 +264,8 @@ test-record construction is not.
 
 ## Immediate next steps
 
-1. **Blocked, pending Zigbee-side owner**: confirm UART payload contents. Separately,
-   confirm baud rate and TX/RX pin assignment (does not require design discussion).
+1. Physically verify the reverse UART wire (Wi-Fi TX GPIO4 to coordinator RX GPIO5),
+   shared ground, and both boards' pin maps before flashing.
 2. ~~Design and implement the switchable test data-source module~~ **Done.**
 3. ~~Design the heartbeat/health record representation in `bridge.py`~~ **Done.**
 4. ~~Harden `bridge.py`~~ **Done**: systemd service, HiveMQ reconnect, ThingsBoard
@@ -250,6 +274,6 @@ test-record construction is not.
    **Done.** Still open: request `priority` be added to `st_gateway_telemetry_to_json`
    upstream (shared code change, needs team input).
 6. ~~Implement UART frame receive, parsing, and payload interpretation~~ **Done**.
-7. Before relying on the UART link for real integration: physical loopback or real
-   two-board test (not yet performed), and the untested edge cases listed under
-   "UART link" above.
+7. Run the deferred Environment Pod command bench plan in
+   `docs/pod-command-and-actuation.md`; retain evidence for every hop and do not extend
+   the physical claim beyond what is observed.

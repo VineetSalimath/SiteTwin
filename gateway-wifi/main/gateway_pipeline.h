@@ -11,5 +11,6 @@ int gateway_pipeline_send_heartbeat(void);
 int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
                                         const uint8_t *payload);
 uint32_t gateway_pipeline_sent_count(void);
+int gateway_pipeline_submit_command(const char *topic, const char *json);
 
 #endif
