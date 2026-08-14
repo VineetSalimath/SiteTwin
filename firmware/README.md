@@ -27,7 +27,7 @@ Pod builds select one composition with `SITETWIN_POD_PROFILE`:
 
 | Profile | Pod ID | Sensors | Prototype wiring |
 | --- | --- | --- | --- |
-| `environment` (default) | `POD_1` | SHT41 temperature/humidity | I2C SDA GPIO6, SCL GPIO7 |
+| `environment` (default) | `POD_1` | SHT41 temperature/humidity, SCD41 CO2, SGP40 compensated VOC Index | Shared I2C SDA GPIO6, SCL GPIO7 |
 | `activity` | `POD_2` | BH1750 illuminance, SR505 PIR, reed contact | I2C SDA GPIO6/SCL GPIO7, PIR GPIO1, reed GPIO0 |
 | `equipment` | `POD_3` | INA219 voltage/current, ADXL345 vibration RMS, DS18B20 temperature | Shared I2C SDA GPIO6/SCL GPIO7; DS18B20 DQ GPIO0 with external 4.7 kΩ pull-up to 3.3 V |
 
@@ -62,9 +62,24 @@ pod. Use a separate build directory for each profile so a stale Environment or
 Activity binary cannot be flashed by mistake.
 
 The table describes the fixed development-pod compositions in this branch.
-The archived Arduino prototypes under `sensor_firmwares` are reference inputs,
-not additional drivers in the ESP-IDF image; in particular, SCD41 and SGP40 are
-not composed by this I1 integration.
+The archived Arduino prototypes under `sensor_firmwares` remain reference
+inputs. The production SGP40 path accepts compensation only from a recent,
+valid SHT41 snapshot; SCD41 temperature/humidity words are CRC-checked but are
+not published, so SHT41 remains the sole temperature/humidity authority.
+
+## Capability-targeted configuration
+
+Portable command contract v2 stores bounded rules by pod capability and rule
+kind, with a revision for each individual rule. Numeric rules cover thresholds,
+deadbands, and reporting intervals; motion/contact rules cover debounce,
+retrigger, and active-state values. Legacy v1 Environment Pod
+`set_threshold/co2_threshold_ppm` maps to the versioned CO2 high-threshold
+rule, and legacy `get_config` reads that same value.
+
+The full alarm condition/acknowledgement/silence layer is not part of I2.
+`silence_alarm` and `test_output` are explicitly unsupported, no output driver
+is composed, and GPIO19 is never driven. Gateway-Wi-Fi, Pi bridge, and
+ThingsBoard parsing are unchanged, so this is not an end-to-end command claim.
 
 ## Final-board contract and feature gates
 

@@ -50,8 +50,8 @@ missing or invalid measurements with zero.
 | Pod | Sensor | Production output | Implementation position | Current validation status |
 | --- | --- | --- | --- | --- |
 | Environment / Pod 1 | SHT41 | Temperature and relative humidity | Production driver on `feature/environment-pod-sensors` | Host-tested and target-compiled; environment hardware has been exercised, final evidence sweep pending |
-| Environment / Pod 1 | SCD41 | CO2 concentration | Production driver on `feature/environment-pod-sensors` | Host-tested and target-compiled; environment hardware has been exercised, final evidence sweep pending |
-| Environment / Pod 1 | SGP40 | Compensated VOC index | Production driver on `feature/environment-pod-sensors` | Host-tested and target-compiled; environment hardware has been exercised, final evidence sweep pending |
+| Environment / Pod 1 | SCD41 | CO2 concentration | Production driver integrated by I2 | Host-tested and target-compiled; no physical validation claimed |
+| Environment / Pod 1 | SGP40 | Compensated VOC index | Production driver integrated by I2 | Host-tested and target-compiled; no physical validation claimed |
 | Activity / Pod 2 | BH1750 | Illuminance | Yicheng's production driver, reused in the composed Activity image | Pod 2 reported physically complete; logs/results to consolidate later |
 | Activity / Pod 2 | Reed switch | Contact open/closed events | Yicheng's production state machine, reused in the Activity image | Pod 2 reported physically complete; logs/results to consolidate later |
 | Activity / Pod 2 | SR505 PIR | Motion-start events | Vineet-owned production state machine and ESP-IDF composition | Pod 2 reported physically complete; logs/results to consolidate later |

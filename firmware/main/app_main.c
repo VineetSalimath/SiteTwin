@@ -27,6 +27,8 @@
 #include "sitetwin/pir.h"
 #include "sitetwin/pod_runtime.h"
 #include "sitetwin/reed.h"
+#include "sitetwin/scd41.h"
+#include "sitetwin/sgp40.h"
 #include "sitetwin/sht41.h"
 #include "sitetwin/zigbee_payload.h"
 
@@ -108,9 +110,16 @@ static st_module_instance_t ina219_module;
 static st_module_instance_t adxl345_module;
 static st_module_instance_t ds18b20_module;
 #else
+static st_espidf_i2c_master_bus_t environment_i2c_bus;
 static st_espidf_i2c_device_t sht41_i2c_device;
+static st_espidf_i2c_device_t scd41_i2c_device;
+static st_espidf_i2c_device_t sgp40_i2c_device;
 static st_sht41_t sht41_sensor;
+static st_scd41_t scd41_sensor;
+static st_sgp40_t sgp40_sensor;
 static st_module_instance_t sht41_module;
+static st_module_instance_t scd41_module;
+static st_module_instance_t sgp40_module;
 #endif
 static bool pod_sensor_runtime_ready;
 #endif
@@ -546,6 +555,27 @@ static esp_err_t activity_gpio_init(void)
 }
 #endif
 
+#if !SITETWIN_POD_PROFILE_ACTIVITY_BUILD && !SITETWIN_POD_PROFILE_EQUIPMENT_BUILD && \
+    CONFIG_SITETWIN_SGP40_ENABLED
+static int pod_sgp40_compensation(void *context, uint64_t now_ms,
+                                  st_sgp40_compensation_t *compensation)
+{
+    st_sht41_environment_sample_t environment;
+    const st_sht41_t *sht41 = (const st_sht41_t *)context;
+
+    if (compensation == NULL ||
+        st_sht41_get_valid_environment(sht41, now_ms,
+                                       CONFIG_SITETWIN_SGP40_COMPENSATION_MAXIMUM_AGE_MS,
+                                       &environment) != 0) {
+        return -1;
+    }
+    compensation->temperature_c = environment.temperature_c;
+    compensation->humidity_percent = environment.humidity_percent;
+    compensation->acquired_at_ms = environment.acquired_at_ms;
+    return 0;
+}
+#endif
+
 static esp_err_t pod_sensor_runtime_init(void)
 {
 #if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
@@ -703,45 +733,145 @@ static esp_err_t pod_sensor_runtime_init(void)
              CONFIG_SITETWIN_DS18B20_GPIO,
              CONFIG_SITETWIN_DS18B20_RESOLUTION_BITS);
     return ESP_OK;
-#elif CONFIG_SITETWIN_SHT41_ENABLED
-    static const uint8_t registry_slots[ST_SHT41_CHANNEL_COUNT] = {0U, 1U};
-    const st_espidf_i2c_device_config_t i2c_config = {
+#elif CONFIG_SITETWIN_SHT41_ENABLED || CONFIG_SITETWIN_SCD41_ENABLED || CONFIG_SITETWIN_SGP40_ENABLED
+    const st_espidf_i2c_master_bus_config_t bus_config = {
         .controller = CONFIG_SITETWIN_SHT41_I2C_CONTROLLER,
         .sda_gpio = CONFIG_SITETWIN_SHT41_I2C_SDA_PIN,
         .scl_gpio = CONFIG_SITETWIN_SHT41_I2C_SCL_PIN,
-        .address = CONFIG_SITETWIN_SHT41_I2C_ADDRESS,
-        .clock_hz = CONFIG_SITETWIN_SHT41_I2C_CLOCK_HZ,
-        .timeout_ms = CONFIG_SITETWIN_SHT41_I2C_TIMEOUT_MS,
         .enable_internal_pullups = ST_SHT41_INTERNAL_PULLUPS_ENABLED,
     };
-    st_sht41_config_t sensor_config;
     esp_err_t result;
 
     st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "POD_1", 1U);
-    result = st_espidf_i2c_device_init(&sht41_i2c_device, &i2c_config);
+    result = st_espidf_i2c_master_bus_init(&environment_i2c_bus, &bus_config);
     if (result != ESP_OK) {
         return result;
     }
 
-    memset(&sensor_config, 0, sizeof(sensor_config));
-    sensor_config.bus = st_espidf_i2c_bus(&sht41_i2c_device);
-    sensor_config.address = CONFIG_SITETWIN_SHT41_I2C_ADDRESS;
-    sensor_config.sample_interval_ms = CONFIG_SITETWIN_SHT41_SAMPLE_INTERVAL_MS;
-    sensor_config.cache_validity_ms = CONFIG_SITETWIN_SHT41_CACHE_VALIDITY_MS;
-    sensor_config.temperature_sensor_id = "sht41_temperature";
-    sensor_config.humidity_sensor_id = "sht41_humidity";
-    if (st_sht41_init(&sht41_sensor, &sensor_config) != 0 ||
-        st_module_instance_init(&sht41_module, st_sht41_module_driver(&sht41_sensor),
-                                ST_SHT41_CHANNEL_COUNT) != 0 ||
-        st_module_instance_attach(&sht41_module, &pod_runtime.registry, registry_slots,
-                                  ST_SHT41_CHANNEL_COUNT) != 0) {
-        st_espidf_i2c_device_deinit(&sht41_i2c_device);
-        return ESP_FAIL;
-    }
+#if CONFIG_SITETWIN_SHT41_ENABLED
+    {
+        static const uint8_t registry_slots[ST_SHT41_CHANNEL_COUNT] = {0U, 1U};
+        const st_espidf_i2c_target_config_t target_config = {
+            .address = CONFIG_SITETWIN_SHT41_I2C_ADDRESS,
+            .clock_hz = CONFIG_SITETWIN_SHT41_I2C_CLOCK_HZ,
+            .timeout_ms = CONFIG_SITETWIN_SHT41_I2C_TIMEOUT_MS,
+        };
+        st_sht41_config_t sensor_config;
 
-    ESP_LOGI(TAG, "SHT41 runtime ready on I2C%d SDA GPIO%d SCL GPIO%d address 0x%02X",
-             CONFIG_SITETWIN_SHT41_I2C_CONTROLLER, CONFIG_SITETWIN_SHT41_I2C_SDA_PIN,
-             CONFIG_SITETWIN_SHT41_I2C_SCL_PIN, CONFIG_SITETWIN_SHT41_I2C_ADDRESS);
+        result = st_espidf_i2c_device_init_on_bus(&sht41_i2c_device,
+                                                   &environment_i2c_bus,
+                                                   &target_config);
+        if (result != ESP_OK) {
+            st_espidf_i2c_master_bus_deinit(&environment_i2c_bus);
+            return result;
+        }
+        memset(&sensor_config, 0, sizeof(sensor_config));
+        sensor_config.bus = st_espidf_i2c_bus(&sht41_i2c_device);
+        sensor_config.address = CONFIG_SITETWIN_SHT41_I2C_ADDRESS;
+        sensor_config.sample_interval_ms = CONFIG_SITETWIN_SHT41_SAMPLE_INTERVAL_MS;
+        sensor_config.cache_validity_ms = CONFIG_SITETWIN_SHT41_CACHE_VALIDITY_MS;
+        sensor_config.temperature_sensor_id = "sht41_temperature";
+        sensor_config.humidity_sensor_id = "sht41_humidity";
+        if (st_sht41_init(&sht41_sensor, &sensor_config) != 0 ||
+            st_module_instance_init(&sht41_module,
+                                    st_sht41_module_driver(&sht41_sensor),
+                                    ST_SHT41_CHANNEL_COUNT) != 0 ||
+            st_module_instance_attach(&sht41_module, &pod_runtime.registry,
+                                      registry_slots, ST_SHT41_CHANNEL_COUNT) != 0) {
+            st_espidf_i2c_device_deinit(&sht41_i2c_device);
+            st_espidf_i2c_master_bus_deinit(&environment_i2c_bus);
+            return ESP_FAIL;
+        }
+    }
+#endif
+
+#if CONFIG_SITETWIN_SCD41_ENABLED
+    {
+        static const uint8_t registry_slots[ST_SCD41_CHANNEL_COUNT] = {2U};
+        const st_espidf_i2c_target_config_t target_config = {
+            .address = CONFIG_SITETWIN_SCD41_I2C_ADDRESS,
+            .clock_hz = CONFIG_SITETWIN_SHT41_I2C_CLOCK_HZ,
+            .timeout_ms = CONFIG_SITETWIN_SHT41_I2C_TIMEOUT_MS,
+        };
+        st_scd41_config_t sensor_config;
+
+        result = st_espidf_i2c_device_init_on_bus(&scd41_i2c_device,
+                                                   &environment_i2c_bus,
+                                                   &target_config);
+        if (result != ESP_OK) {
+            st_espidf_i2c_master_bus_deinit(&environment_i2c_bus);
+            return result;
+        }
+        memset(&sensor_config, 0, sizeof(sensor_config));
+        sensor_config.bus = st_espidf_i2c_bus(&scd41_i2c_device);
+        sensor_config.address = CONFIG_SITETWIN_SCD41_I2C_ADDRESS;
+#ifdef CONFIG_SITETWIN_SCD41_MODE_LOW_POWER_PERIODIC
+        sensor_config.measurement_mode = ST_SCD41_MODE_LOW_POWER_PERIODIC;
+#else
+        sensor_config.measurement_mode = ST_SCD41_MODE_PERIODIC;
+#endif
+        sensor_config.poll_interval_ms = CONFIG_SITETWIN_SCD41_POLL_INTERVAL_MS;
+        sensor_config.co2_sensor_id = "scd41_co2";
+        if (st_scd41_init(&scd41_sensor, &sensor_config) != 0 ||
+            st_module_instance_init(&scd41_module,
+                                    st_scd41_module_driver(&scd41_sensor),
+                                    ST_SCD41_CHANNEL_COUNT) != 0 ||
+            st_module_instance_attach(&scd41_module, &pod_runtime.registry,
+                                      registry_slots, ST_SCD41_CHANNEL_COUNT) != 0) {
+            st_espidf_i2c_device_deinit(&scd41_i2c_device);
+            st_espidf_i2c_master_bus_deinit(&environment_i2c_bus);
+            return ESP_FAIL;
+        }
+    }
+#endif
+
+#if CONFIG_SITETWIN_SGP40_ENABLED
+    {
+        static const uint8_t registry_slots[ST_SGP40_CHANNEL_COUNT] = {3U};
+        const st_espidf_i2c_target_config_t target_config = {
+            .address = CONFIG_SITETWIN_SGP40_I2C_ADDRESS,
+            .clock_hz = CONFIG_SITETWIN_SHT41_I2C_CLOCK_HZ,
+            .timeout_ms = CONFIG_SITETWIN_SHT41_I2C_TIMEOUT_MS,
+        };
+        st_sgp40_config_t sensor_config;
+
+        result = st_espidf_i2c_device_init_on_bus(&sgp40_i2c_device,
+                                                   &environment_i2c_bus,
+                                                   &target_config);
+        if (result != ESP_OK) {
+            st_espidf_i2c_master_bus_deinit(&environment_i2c_bus);
+            return result;
+        }
+        memset(&sensor_config, 0, sizeof(sensor_config));
+        sensor_config.bus = st_espidf_i2c_bus(&sgp40_i2c_device);
+        sensor_config.address = CONFIG_SITETWIN_SGP40_I2C_ADDRESS;
+#ifdef CONFIG_SITETWIN_SGP40_ALGORITHM_INTERVAL_10S
+        sensor_config.algorithm_interval_ms = 10000U;
+#else
+        sensor_config.algorithm_interval_ms = 1000U;
+#endif
+        sensor_config.compensation_maximum_age_ms =
+            CONFIG_SITETWIN_SGP40_COMPENSATION_MAXIMUM_AGE_MS;
+        sensor_config.compensation_provider = pod_sgp40_compensation;
+        sensor_config.compensation_context = &sht41_sensor;
+        sensor_config.voc_index_sensor_id = "sgp40_voc";
+        if (st_sgp40_init(&sgp40_sensor, &sensor_config) != 0 ||
+            st_module_instance_init(&sgp40_module,
+                                    st_sgp40_module_driver(&sgp40_sensor),
+                                    ST_SGP40_CHANNEL_COUNT) != 0 ||
+            st_module_instance_attach(&sgp40_module, &pod_runtime.registry,
+                                      registry_slots, ST_SGP40_CHANNEL_COUNT) != 0) {
+            st_espidf_i2c_device_deinit(&sgp40_i2c_device);
+            st_espidf_i2c_master_bus_deinit(&environment_i2c_bus);
+            return ESP_FAIL;
+        }
+    }
+#endif
+
+    ESP_LOGI(TAG, "Environment I2C ready on controller %d SDA GPIO%d SCL GPIO%d",
+             CONFIG_SITETWIN_SHT41_I2C_CONTROLLER,
+             CONFIG_SITETWIN_SHT41_I2C_SDA_PIN,
+             CONFIG_SITETWIN_SHT41_I2C_SCL_PIN);
     return ESP_OK;
 #else
     return ESP_ERR_NOT_SUPPORTED;
@@ -750,17 +880,38 @@ static esp_err_t pod_sensor_runtime_init(void)
 
 static uint8_t pod_sensor_slot(const st_telemetry_record_t *record)
 {
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
     switch (record->reading.sensor_kind) {
-    case ST_SENSOR_RELATIVE_HUMIDITY_PERCENT:
     case ST_SENSOR_MOTION:
-    case ST_SENSOR_CURRENT_MA:
         return 1U;
     case ST_SENSOR_CONTACT:
-    case ST_SENSOR_VIBRATION_RMS_G:
         return 2U;
     default:
         return 0U;
     }
+#elif SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
+    switch (record->reading.sensor_kind) {
+    case ST_SENSOR_CURRENT_MA:
+        return 1U;
+    case ST_SENSOR_VIBRATION_RMS_G:
+        return 2U;
+    case ST_SENSOR_TEMPERATURE_C:
+        return 3U;
+    default:
+        return 0U;
+    }
+#else
+    switch (record->reading.sensor_kind) {
+    case ST_SENSOR_RELATIVE_HUMIDITY_PERCENT:
+        return 1U;
+    case ST_SENSOR_CO2_PPM:
+        return 2U;
+    case ST_SENSOR_VOC_INDEX:
+        return 3U;
+    default:
+        return 0U;
+    }
+#endif
 }
 
 static int pod_send_telemetry(const st_telemetry_record_t *record)

@@ -1,7 +1,7 @@
 ---
 title: Firmware Architecture
 project: SiteTwin
-status: Existing sensor delta reconciled; final-board controls gated
+status: Environment sensor set integrated; capability configuration portable
 tags:
   - sitetwin
   - firmware
@@ -128,7 +128,7 @@ This is especially important for SCD41 warm-up, SGP40 compensation status, and A
 
 ## Per-Pod Runtime Shape
 
-- Environment pod: this I1 image composes SHT41 temperature/humidity; SCD41 and SGP40 remain separate production-driver work
+- Environment pod: SHT41 is the sole temperature/humidity authority, SCD41 publishes CO2 only, and SGP40 publishes VOC Index using recent valid SHT41 compensation
 - Activity and access pod: interrupt-driven PIR and reed path, with BH1750 on a slower periodic cadence
 - Equipment pod: slow path for DS18B20 and INA219, fast path for ADXL345 FIFO and derived vibration features
 

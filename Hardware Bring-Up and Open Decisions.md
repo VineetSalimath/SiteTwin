@@ -73,10 +73,10 @@ ADC thresholds, PWM values, or load limits.
 
 - The 30-byte SiteTwin Zigbee telemetry path is deployed on ESP32-C6.
 - The sensor runtime supports stable numbered pod identities.
-- This I1 line composes SHT41 for `POD_1`; BH1750, PIR, and reed for `POD_2`;
-  and INA219, ADXL345, and DS18B20 for `POD_3`.
-- SCD41 and SGP40 remain archived Arduino/reference work in this integration;
-  they are not composed ESP-IDF drivers here.
+- This I2 line composes SHT41, SCD41, and SGP40 for `POD_1`; BH1750, PIR, and
+  reed for `POD_2`; and INA219, ADXL345, and DS18B20 for `POD_3`.
+- SHT41 is the sole temperature/humidity authority. SGP40 requires recent
+  valid SHT41 compensation; SCD41 temperature/humidity is not published.
 - Physical final-board discovery, hot-swap, and shared-indicator behavior are
   intentionally absent.
 

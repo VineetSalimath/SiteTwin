@@ -52,10 +52,10 @@ The project is no longer "one smart node with every sensor attached." The strong
 ### Latest deployed milestone
 
 The three numbered fixed-development profiles now use reconciled ESP-IDF
-sensor compositions: SHT41 on Pod 1; BH1750, PIR, and reed on Pod 2; and
-INA219, ADXL345, and DS18B20 on Pod 3. The I1 host suite and all three ESP32-C6
-profile builds pass. This workstream does not change the gateway, Raspberry
-Pi, ThingsBoard, or command-actuation path.
+sensor compositions: SHT41, SCD41, and SGP40 on Pod 1; BH1750, PIR, and reed
+on Pod 2; and INA219, ADXL345, and DS18B20 on Pod 3. I2 adds portable,
+capability-targeted versioned configuration while leaving the gateway-Wi-Fi,
+Raspberry Pi, ThingsBoard, alarm-control, and physical-output paths unchanged.
 
 Implemented and passing host tests:
 
