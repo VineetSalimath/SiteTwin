@@ -60,9 +60,25 @@ void st_pod_runtime_tick(st_pod_runtime_t *runtime, uint64_t now_ms)
     reading_count = st_sensor_registry_tick(&runtime->registry, now_ms, readings, ST_MAX_SENSOR_PORTS);
     for (index = 0U; index < reading_count; ++index) {
         st_telemetry_record_t record = make_record(readings[index]);
+        if (runtime->reading_observer != NULL) {
+            (void)runtime->reading_observer(runtime->reading_observer_context,
+                                            &readings[index], now_ms);
+        }
         if (st_reporting_policy_should_report(&runtime->reporting, &record)) {
             (void)st_telemetry_queue_push(&runtime->outbound, &record);
         }
+    }
+}
+
+void st_pod_runtime_set_reading_observer(
+    st_pod_runtime_t *runtime,
+    int (*observer)(void *context, const st_sensor_reading_t *reading,
+                    uint64_t now_ms),
+    void *context)
+{
+    if (runtime != NULL) {
+        runtime->reading_observer = observer;
+        runtime->reading_observer_context = context;
     }
 }
 
@@ -88,6 +104,10 @@ int st_pod_runtime_emit_event(st_pod_runtime_t *runtime, const char *sensor_id,
     record.reading.uptime_ms = now_ms;
     record.reading.value = value;
     record.reading.quality_flags = ST_QUALITY_VALID;
+    if (runtime->reading_observer != NULL) {
+        (void)runtime->reading_observer(runtime->reading_observer_context,
+                                        &record.reading, now_ms);
+    }
     return st_telemetry_queue_push(&runtime->outbound, &record);
 }
 

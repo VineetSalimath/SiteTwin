@@ -8,8 +8,10 @@ $sensorsInclude = Join-Path $repositoryRoot 'components\sitetwin_sensors\include
 $fakeInclude = Join-Path $projectRoot 'components\sitetwin_fake_hal\include'
 $outputPath = Join-Path $env:TEMP 'sitetwin-host-tests.exe'
 $sources = @(
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\alarm.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\capability_config.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\command.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\control_event.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\contracts.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_frame.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_identity.c'),
@@ -17,6 +19,7 @@ $sources = @(
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_processor.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_registry.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_runtime.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_core\src\gateway_state.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\pod_runtime.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\reporting_policy.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_core\src\sensor_registry.c'),
@@ -40,6 +43,8 @@ $sources = @(
     (Join-Path $PSScriptRoot 'test_sgp40.c'),
     (Join-Path $PSScriptRoot 'test_command_actuation.c'),
     (Join-Path $PSScriptRoot 'test_command_transport.c'),
+    (Join-Path $PSScriptRoot 'test_alarm_control.c'),
+    (Join-Path $PSScriptRoot 'test_gateway_state.c'),
     (Join-Path $PSScriptRoot 'test_gateway_identity.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
     (Join-Path $PSScriptRoot 'test_bh1750.c'),

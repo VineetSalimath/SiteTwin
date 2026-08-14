@@ -1,8 +1,9 @@
-# Capability-Targeted Configuration Foundation
+# Capability-Targeted Configuration and Logical Alarm Control
 
-Status: portable implementation and target compilation only. The historical
-filename is retained to preserve source-branch lineage; I2 implements no alarm
-state machine and no physical actuation.
+Status: portable implementation, target NVS composition, deterministic host
+tests, and target compilation only. The historical filename is retained to
+preserve source-branch lineage. C1 implements logical alarm state, never
+physical actuation.
 
 ## Scope
 
@@ -42,37 +43,46 @@ composition in I2.
 
 ## Wire compatibility
 
-Command contract version 2 retains the 64-byte command and 44-byte
-acknowledgement sizes. Bytes 60 and 61 now carry the capability and rule kind.
-Version-1 command frames remain decodable. Legacy Environment Pod
+Command contract version 3 uses a 72-byte command and 60-byte acknowledgement
+to carry an exact alarm-instance ID, capability mask, and ruleset revision.
+Version-1 and version-2 command/result frames remain decodable. Legacy Environment Pod
 `set_threshold` commands targeting `co2_threshold_ppm` map to the
 `CO2/numeric_high_threshold` rule. Legacy `get_config` reads the same rule.
 
 The old CO2 value/revision prefix remains in persistent state and mirrors that
-rule. Host tests cover migration of a version-1 state into the version-2 rule
-table and duplicate-command history. A target NVS migration adapter is not
-composed in I2 and remains an integration item for the later transport layer.
+rule. Host tests cover version-1 and version-2 migration into the C1 state,
+including duplicate-command history. The target adapter stores command/config,
+rule revision, alarm-instance counter, active conditions, and acknowledgement
+state in default NVS namespace `st_pod_ctrl`.
 
 ## Control boundary
 
-`silence_alarm` and `test_output` enum values remain decodable for wire
-compatibility, but every I2 profile rejects them as `unsupported`. I2 has no
-alarm-condition, acknowledgement, silence, output-test, LED, buzzer, or motor
-state machine. GPIO19 and the shared buzzer/LED branch are never configured or
-driven.
+Usable sensor readings evaluate numeric high/low and state-active rules before
+telemetry suppression. A condition receives a stable instance ID through its
+active, acknowledged, and cleared transitions; retriggering receives a new ID.
+Acknowledgement is persistent and independent of the condition. Silence is
+independent and deliberately volatile: a reboot cancels it and publishes
+`reboot_reset`.
 
-I3 composes the command/ack gateway-frame message types through the Wi-Fi
-gateway, Zigbee coordinator, pod command runtime, and Pi RPC correlation layer.
-This is a transport implementation only: the pod uses volatile command state,
-target NVS persistence is not composed, and no deployed or physical end-to-end
-claim is made. See `docs/command-transport.md`.
+Every current profile advertises `shared_alarm_indicator_verified=false`, so
+`silence_alarm` and `test_output` are rejected as `unsupported`. GPIO19 and the
+shared buzzer/LED branch are never configured or driven. Acknowledgement never
+claims output success. Pod 3 alarms are monitoring evidence only and cannot
+control or cut a motor.
+
+C1 composes commands, results, and control-state events through the Wi-Fi
+gateway, Zigbee coordinator, and Pi RPC/projection layer. See
+`docs/command-transport.md` and `docs/control-layer.md`.
 
 ## Verification boundary
 
-Host verification covers strict v1/v2 codec handling, profile capability
+Host verification covers strict v1/v2/v3 codec handling, profile capability
 masks, numeric and event/state rule validation, per-rule revisions, legacy CO2
 mapping, persistence migration, idempotency, reporting-policy application,
-wrong-target/expiry handling, and explicit output-command rejection.
+condition clear/retrigger, acknowledgement recovery, state debounce, volatile
+silence expiry/reboot, wrong-target/expiry handling, and explicit
+output-command rejection.
 
-ESP32-C6 builds prove compilation only. No SCD41, SGP40, configuration command,
-NVS migration, Zigbee downlink, alarm, or physical output validation is claimed.
+ESP32-C6 builds prove compilation only. No C1 NVS migration, alarm threshold,
+Zigbee control-event, ThingsBoard projection, or physical output validation is
+claimed on hardware.

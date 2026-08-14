@@ -4,6 +4,7 @@
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
@@ -17,6 +18,7 @@
 #include "sitetwin/adxl345.h"
 #include "sitetwin/bh1750.h"
 #include "sitetwin/command.h"
+#include "sitetwin/control_event.h"
 #include "sitetwin/contracts.h"
 #include "sitetwin/ds18b20.h"
 #include "sitetwin/espidf_i2c_bus.h"
@@ -24,6 +26,7 @@
 #include "sitetwin/gateway_frame.h"
 #include "sitetwin/gateway_identity.h"
 #include "sitetwin/gateway_runtime.h"
+#include "sitetwin/gateway_state.h"
 #include "sitetwin/ina219.h"
 #include "sitetwin/module_instance.h"
 #include "sitetwin/pir.h"
@@ -33,23 +36,32 @@
 #include "sitetwin/sgp40.h"
 #include "sitetwin/sht41.h"
 #include "sitetwin/zigbee_payload.h"
+#include "control_persistence.h"
 
 #define ST_ZIGBEE_CLUSTER_ID 0xFC00U
 #define ST_ZIGBEE_ENDPOINT 1U
 #define ST_ZIGBEE_TELEMETRY_COMMAND 0x01U
 #define ST_ZIGBEE_POD_COMMAND 0x02U
 #define ST_ZIGBEE_COMMAND_ACK 0x03U
+#define ST_ZIGBEE_CONTROL_EVENT 0x04U
 #define ST_ZIGBEE_STORAGE_PARTITION "zb_storage"
 #define ST_GATEWAY_ADDRESS 0x0000U
 #define ST_GATEWAY_UART_PORT UART_NUM_1
 #define ST_GATEWAY_UART_RX_BUFFER_SIZE 256U
 #define ST_GATEWAY_UART_TX_BUFFER_SIZE 1024U
+#define ST_GATEWAY_UART_MAX_PAYLOAD ST_CONTROL_EVENT_WIRE_SIZE
 
 static const char *TAG = "sitetwin_zigbee";
 #if SITETWIN_GATEWAY_ROLE_BUILD
 static st_gateway_runtime_t gateway_runtime;
+static st_gateway_state_t gateway_state;
 #endif
 static volatile bool pod_joined;
+
+static uint64_t monotonic_now_ms(void)
+{
+    return (uint64_t)(esp_timer_get_time() / 1000);
+}
 
 #if !SITETWIN_GATEWAY_ROLE_BUILD
 #ifdef CONFIG_SITETWIN_SHT41_ENABLE_INTERNAL_PULLUPS
@@ -176,7 +188,7 @@ static int gateway_uart_forward(st_gateway_message_type_t message_type,
         .boot_id = boot_id,
         .sequence = sequence,
     };
-    uint8_t frame[ST_GATEWAY_FRAME_HEADER_SIZE + ST_COMMAND_WIRE_SIZE +
+    uint8_t frame[ST_GATEWAY_FRAME_HEADER_SIZE + ST_GATEWAY_UART_MAX_PAYLOAD +
                   ST_GATEWAY_FRAME_CRC_SIZE];
     size_t frame_length;
 
@@ -227,7 +239,7 @@ static void gateway_report_transport_failure(const st_command_t *command)
     memcpy(ack.pod_id, command->target_pod_id, sizeof(ack.pod_id));
     ack.status = ST_COMMAND_STATUS_FAILED;
     ack.reason = ST_COMMAND_REASON_TRANSPORT_FAILED;
-    ack.timestamp_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+    ack.timestamp_ms = monotonic_now_ms();
     if (st_command_ack_encode(&ack, payload, sizeof(payload), &length) == 0) {
         (void)gateway_uart_forward(ST_GATEWAY_MESSAGE_COMMAND_ACK, 0U, payload,
                                    (uint16_t)length, 0U,
@@ -261,7 +273,7 @@ static void gateway_uart_process_frame(const uint8_t *frame, size_t frame_length
 
 static void gateway_uart_rx_task(void *context)
 {
-    uint8_t buffer[ST_GATEWAY_FRAME_HEADER_SIZE + ST_COMMAND_WIRE_SIZE +
+    uint8_t buffer[ST_GATEWAY_FRAME_HEADER_SIZE + ST_GATEWAY_UART_MAX_PAYLOAD +
                    ST_GATEWAY_FRAME_CRC_SIZE];
     size_t used = 0U;
 
@@ -354,9 +366,15 @@ static ezb_zcl_status_t gateway_telemetry_handler(const ezb_zcl_cmd_hdr_t *heade
         int decode_result = st_zigbee_telemetry_decode(payload, payload_length, pod_id, sensor_id,
                                                        &record, &sensor_slot);
         if (decode_result == 0) {
+            uint64_t coordinator_now_ms = monotonic_now_ms();
             st_gateway_message_type_t type =
                 record.record_class == ST_RECORD_HEALTH ? ST_GATEWAY_MESSAGE_HEALTH
                                                         : ST_GATEWAY_MESSAGE_TELEMETRY;
+            if (st_gateway_state_ingest_telemetry(&gateway_state, &record,
+                                                  coordinator_now_ms) != 0) {
+                ESP_LOGW(TAG, "Gateway-state telemetry capacity reached for %s/%s",
+                         pod_id, sensor_id);
+            }
             if (gateway_uart_forward(type, header->src_addr.u.short_addr,
                                      payload, payload_length,
                                      record.reading.boot_id,
@@ -398,6 +416,67 @@ static ezb_zcl_status_t gateway_command_ack_handler(const ezb_zcl_cmd_hdr_t *hea
     return EZB_ZCL_STATUS_SUCCESS;
 }
 
+static ezb_zcl_status_t gateway_control_event_handler(const ezb_zcl_cmd_hdr_t *header,
+                                                       const uint8_t *payload,
+                                                       uint16_t payload_length)
+{
+    st_control_event_t event;
+    uint16_t expected_address;
+    uint64_t now_ms = monotonic_now_ms();
+
+    if (header == NULL || payload == NULL ||
+        header->cluster_id != ST_ZIGBEE_CLUSTER_ID ||
+        EZB_ZCL_CMD_FC_IS_TO_CLI_DIRECTION(header->fc) ||
+        header->cmd_id != ST_ZIGBEE_CONTROL_EVENT ||
+        st_control_event_decode(payload, payload_length, &event) != 0 ||
+        st_gateway_identity_short_address(event.pod_id, &expected_address) != 0 ||
+        expected_address != header->src_addr.u.short_addr) {
+        return EZB_ZCL_STATUS_INVALID_FIELD;
+    }
+    if (event.event_kind == ST_CONTROL_EVENT_ALARM_CONDITION &&
+        st_gateway_state_ingest_control(&gateway_state, &event, now_ms) != 0) {
+        ESP_LOGW(TAG, "Gateway-state alarm evidence rejected for %s",
+                 event.pod_id);
+    }
+    if (gateway_uart_forward(ST_GATEWAY_MESSAGE_CONTROL_EVENT,
+                             header->src_addr.u.short_addr, payload,
+                             payload_length, event.boot_id,
+                             event.sequence) != 0) {
+        ESP_LOGW(TAG, "UART control-event forward failed for %s",
+                 event.pod_id);
+    }
+    return EZB_ZCL_STATUS_SUCCESS;
+}
+
+static void gateway_state_task(void *context)
+{
+    st_control_event_t pending_event;
+    bool has_pending_event = false;
+
+    (void)context;
+    for (;;) {
+        uint8_t payload[ST_CONTROL_EVENT_WIRE_SIZE];
+        size_t payload_length;
+        uint64_t now_ms = monotonic_now_ms();
+
+        st_gateway_state_tick(&gateway_state, now_ms);
+        while (has_pending_event ||
+               st_gateway_state_next_event(&gateway_state, &pending_event) == 0) {
+            has_pending_event = true;
+            if (st_control_event_encode(&pending_event, payload, sizeof(payload),
+                                        &payload_length) != 0 ||
+                gateway_uart_forward(ST_GATEWAY_MESSAGE_CONTROL_EVENT, 0U,
+                                     payload, (uint16_t)payload_length, 0U,
+                                     pending_event.sequence) != 0) {
+                ESP_LOGW(TAG, "Gateway incident UART forward failed");
+                break;
+            }
+            has_pending_event = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000U));
+    }
+}
+
 static ezb_zcl_status_t gateway_cluster_handler(const ezb_zcl_cmd_hdr_t *header,
                                                 const uint8_t *payload,
                                                 uint16_t payload_length)
@@ -405,17 +484,21 @@ static ezb_zcl_status_t gateway_cluster_handler(const ezb_zcl_cmd_hdr_t *header,
     if (header != NULL && header->cmd_id == ST_ZIGBEE_COMMAND_ACK) {
         return gateway_command_ack_handler(header, payload, payload_length);
     }
+    if (header != NULL && header->cmd_id == ST_ZIGBEE_CONTROL_EVENT) {
+        return gateway_control_event_handler(header, payload, payload_length);
+    }
     return gateway_telemetry_handler(header, payload, payload_length);
 }
 
 static uint8_t gateway_command_discovery(bool is_recv, uint8_t **list)
 {
     static uint8_t receive_commands[] = {ST_ZIGBEE_TELEMETRY_COMMAND,
-                                         ST_ZIGBEE_COMMAND_ACK};
+                                         ST_ZIGBEE_COMMAND_ACK,
+                                         ST_ZIGBEE_CONTROL_EVENT};
     static uint8_t send_commands[] = {ST_ZIGBEE_POD_COMMAND};
 
     *list = is_recv ? receive_commands : send_commands;
-    return is_recv ? 2U : 1U;
+    return is_recv ? 3U : 1U;
 }
 
 #else
@@ -432,7 +515,7 @@ static ezb_zcl_status_t pod_command_handler(const ezb_zcl_cmd_hdr_t *header,
         st_command_decode(payload, payload_length, &queued.command) != 0) {
         return EZB_ZCL_STATUS_INVALID_FIELD;
     }
-    queued.received_at_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+    queued.received_at_ms = monotonic_now_ms();
     if (pod_command_queue == NULL ||
         xQueueSend(pod_command_queue, &queued, 0U) != pdPASS) {
         st_command_ack_t ack;
@@ -455,10 +538,11 @@ static uint8_t pod_command_discovery(bool is_recv, uint8_t **list)
 {
     static uint8_t receive_commands[] = {ST_ZIGBEE_POD_COMMAND};
     static uint8_t send_commands[] = {ST_ZIGBEE_TELEMETRY_COMMAND,
-                                      ST_ZIGBEE_COMMAND_ACK};
+                                      ST_ZIGBEE_COMMAND_ACK,
+                                      ST_ZIGBEE_CONTROL_EVENT};
 
     *list = is_recv ? receive_commands : send_commands;
-    return is_recv ? 1U : 2U;
+    return is_recv ? 1U : 3U;
 }
 
 #endif
@@ -1179,13 +1263,56 @@ static int pod_send_command_ack(const st_command_ack_t *ack)
     return result;
 }
 
+static int pod_send_control_event(const st_control_event_t *event)
+{
+    uint8_t payload[ST_CONTROL_EVENT_WIRE_SIZE];
+    size_t payload_length;
+    ezb_zcl_custom_cluster_cmd_t command;
+    int result;
+
+    if (st_control_event_encode(event, payload, sizeof(payload),
+                                &payload_length) != 0) {
+        return -1;
+    }
+    memset(&command, 0, sizeof(command));
+    command.cmd_ctrl.dst_addr = EZB_ADDRESS_SHORT(ST_GATEWAY_ADDRESS);
+    command.cmd_ctrl.dst_ep = ST_ZIGBEE_ENDPOINT;
+    command.cmd_ctrl.src_ep = ST_ZIGBEE_ENDPOINT;
+    command.cmd_ctrl.cluster_id = ST_ZIGBEE_CLUSTER_ID;
+    command.cmd_ctrl.fc.direction = EZB_ZCL_CMD_DIRECTION_TO_SRV;
+    command.cmd_ctrl.fc.dis_default_rsp = true;
+    command.cmd_id = ST_ZIGBEE_CONTROL_EVENT;
+    command.data_length = (uint16_t)payload_length;
+    command.data = payload;
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    result = ezb_zcl_custom_cluster_cmd_req(&command);
+    esp_zigbee_lock_release();
+    return result;
+}
+
+static int pod_alarm_reading_observer(void *context,
+                                      const st_sensor_reading_t *reading,
+                                      uint64_t now_ms)
+{
+    int result = st_command_runtime_ingest_reading(
+        (st_command_runtime_t *)context, reading, now_ms);
+    if (result < 0) {
+        ESP_LOGW(TAG, "Alarm evaluation/persistence failed for %s (%d)",
+                 reading->sensor_id, result);
+    }
+    return result;
+}
+
 static void pod_command_task(void *context)
 {
+    st_control_event_t pending_event;
+    bool has_pending_event = false;
+
     (void)context;
     for (;;) {
         st_command_ack_t queued_ack;
         st_queued_pod_command_t queued;
-        uint64_t now_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+        uint64_t now_ms = monotonic_now_ms();
 
         while (xQueueReceive(pod_command_ack_queue, &queued_ack, 0U) == pdPASS) {
             if (pod_joined && pod_send_command_ack(&queued_ack) != 0) {
@@ -1214,6 +1341,20 @@ static void pod_command_task(void *context)
                 }
             }
         }
+        st_command_runtime_tick(&pod_command_runtime, now_ms);
+        if (pod_joined) {
+            while (has_pending_event ||
+                   st_command_runtime_next_control_event(&pod_command_runtime,
+                                                         &pending_event) == 0) {
+                has_pending_event = true;
+                if (pod_send_control_event(&pending_event) != 0) {
+                    ESP_LOGW(TAG, "Control-event send failed for %s/%s",
+                             pending_event.pod_id, pending_event.sensor_id);
+                    break;
+                }
+                has_pending_event = false;
+            }
+        }
         vTaskDelay(pdMS_TO_TICKS(50U));
     }
 }
@@ -1226,7 +1367,7 @@ static void pod_telemetry_task(void *context)
 
     (void)context;
     for (;;) {
-        uint64_t now_ms = (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+        uint64_t now_ms = monotonic_now_ms();
 
         if (pod_sensor_runtime_ready) {
             st_telemetry_record_t record;
@@ -1304,8 +1445,30 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ST_ZIGBEE_STORAGE_PARTITION));
 #if SITETWIN_GATEWAY_ROLE_BUILD
+    uint64_t gateway_start_ms = monotonic_now_ms();
+
     st_gateway_runtime_init(&gateway_runtime);
+    ESP_ERROR_CHECK(st_gateway_state_init(
+                        &gateway_state,
+                        st_espidf_gateway_state_persistence(),
+                        gateway_start_ms) == 0
+                        ? ESP_OK
+                        : ESP_FAIL);
+    ESP_ERROR_CHECK(st_gateway_state_register_pod(&gateway_state, ST_POD_1_ID,
+                                                  gateway_start_ms) == 0
+                        ? ESP_OK
+                        : ESP_FAIL);
+    ESP_ERROR_CHECK(st_gateway_state_register_pod(&gateway_state, ST_POD_2_ID,
+                                                  gateway_start_ms) == 0
+                        ? ESP_OK
+                        : ESP_FAIL);
+    ESP_ERROR_CHECK(st_gateway_state_register_pod(&gateway_state, ST_POD_3_ID,
+                                                  gateway_start_ms) == 0
+                        ? ESP_OK
+                        : ESP_FAIL);
     gateway_uart_init();
+    ESP_ERROR_CHECK(xTaskCreate(gateway_state_task, "st_gw_state", 4096, NULL,
+                                5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);
     ESP_LOGI(TAG, "Starting SiteTwin gateway/coordinator image");
 #else
     ESP_LOGI(TAG, "Starting SiteTwin pod/end-device image");
@@ -1319,27 +1482,39 @@ void app_main(void)
         ESP_LOGE(TAG, "Pod sensor runtime initialization failed");
     }
 #if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
-    ESP_ERROR_CHECK(st_command_runtime_init(&pod_command_runtime,
+    ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
+                                             &pod_command_runtime,
                                              ST_POD_ACTIVITY_ACCESS,
                                              ST_POD_2_ID,
-                                             (st_command_persistence_t){0}) == 0
+                                             st_espidf_pod_command_persistence(),
+                                             pod_runtime.registry.boot_id,
+                                             monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
 #elif SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
-    ESP_ERROR_CHECK(st_command_runtime_init(&pod_command_runtime,
+    ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
+                                             &pod_command_runtime,
                                              ST_POD_EQUIPMENT,
                                              ST_POD_3_ID,
-                                             (st_command_persistence_t){0}) == 0
+                                             st_espidf_pod_command_persistence(),
+                                             pod_runtime.registry.boot_id,
+                                             monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
 #else
-    ESP_ERROR_CHECK(st_command_runtime_init(&pod_command_runtime,
+    ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
+                                             &pod_command_runtime,
                                              ST_POD_ENVIRONMENT,
                                              ST_POD_1_ID,
-                                             (st_command_persistence_t){0}) == 0
+                                             st_espidf_pod_command_persistence(),
+                                             pod_runtime.registry.boot_id,
+                                             monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
 #endif
+    st_pod_runtime_set_reading_observer(&pod_runtime,
+                                        pod_alarm_reading_observer,
+                                        &pod_command_runtime);
     ESP_ERROR_CHECK(xTaskCreate(pod_command_task, "st_pod_cmd", 4096, NULL,
                                 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(xTaskCreate(pod_telemetry_task, "st_pod_tx", 4096, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);

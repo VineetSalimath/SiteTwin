@@ -77,6 +77,7 @@ int st_command_encode(const st_command_t *command, uint8_t *payload,
     write_u32_le(&payload[56], command->valid_for_ms);
     payload[60] = (uint8_t)command->capability;
     payload[61] = (uint8_t)command->rule_kind;
+    write_u64_le(&payload[64], command->alarm_instance_id);
     *length = ST_COMMAND_WIRE_SIZE;
     return 0;
 }
@@ -85,13 +86,17 @@ int st_command_decode(const uint8_t *payload, size_t length, st_command_t *comma
 {
     uint8_t version;
 
-    if (payload == NULL || command == NULL || length != ST_COMMAND_WIRE_SIZE ||
-        payload[55] != 0U) {
+    if (payload == NULL || command == NULL || payload[55] != 0U) {
         return -1;
     }
     version = payload[0];
-    if (version != ST_COMMAND_CONTRACT_VERSION &&
-        version != ST_COMMAND_LEGACY_CONTRACT_VERSION) {
+    if ((version == ST_COMMAND_CONTRACT_VERSION && length != ST_COMMAND_WIRE_SIZE) ||
+        ((version == ST_COMMAND_V2_CONTRACT_VERSION ||
+          version == ST_COMMAND_LEGACY_CONTRACT_VERSION) &&
+         length != ST_COMMAND_V2_WIRE_SIZE) ||
+        (version != ST_COMMAND_CONTRACT_VERSION &&
+         version != ST_COMMAND_V2_CONTRACT_VERSION &&
+         version != ST_COMMAND_LEGACY_CONTRACT_VERSION)) {
         return -1;
     }
     memset(command, 0, sizeof(*command));
@@ -107,13 +112,17 @@ int st_command_decode(const uint8_t *payload, size_t length, st_command_t *comma
     memcpy(command->target_pod_id, &payload[40], ST_POD_ID_MAX_LEN);
     command->target_pod_id[ST_POD_ID_MAX_LEN - 1U] = '\0';
     command->valid_for_ms = read_u32_le(&payload[56]);
-    if (version == ST_COMMAND_CONTRACT_VERSION) {
+    if (version == ST_COMMAND_CONTRACT_VERSION ||
+        version == ST_COMMAND_V2_CONTRACT_VERSION) {
         command->capability = (st_sensor_kind_t)payload[60];
         command->rule_kind = (st_config_rule_kind_t)payload[61];
     } else if (command->command_type == ST_COMMAND_SET_THRESHOLD &&
                command->target == ST_COMMAND_TARGET_CO2_THRESHOLD) {
         command->capability = ST_SENSOR_CO2_PPM;
         command->rule_kind = ST_CONFIG_RULE_NUMERIC_HIGH_THRESHOLD;
+    }
+    if (version == ST_COMMAND_CONTRACT_VERSION) {
+        command->alarm_instance_id = read_u64_le(&payload[64]);
     }
     return command->target_pod_id[0] == '\0' ? -1 : 0;
 }
@@ -134,15 +143,24 @@ int st_command_ack_encode(const st_command_ack_t *ack, uint8_t *payload,
     write_u32_le(&payload[28], ack->applied_config_revision);
     write_u64_le(&payload[32], ack->timestamp_ms);
     write_float_le(&payload[40], ack->config_value);
+    write_u64_le(&payload[44], ack->alarm_instance_id);
+    write_u32_le(&payload[52], ack->capability_mask);
+    write_u32_le(&payload[56], ack->ruleset_revision);
     *length = ST_COMMAND_ACK_WIRE_SIZE;
     return 0;
 }
 
 int st_command_ack_decode(const uint8_t *payload, size_t length, st_command_ack_t *ack)
 {
-    if (payload == NULL || ack == NULL || length != ST_COMMAND_ACK_WIRE_SIZE ||
-        (payload[0] != ST_COMMAND_CONTRACT_VERSION &&
-         payload[0] != ST_COMMAND_LEGACY_CONTRACT_VERSION) ||
+    if (payload == NULL || ack == NULL ||
+        ((payload[0] == ST_COMMAND_CONTRACT_VERSION &&
+          length != ST_COMMAND_ACK_WIRE_SIZE) ||
+         ((payload[0] == ST_COMMAND_V2_CONTRACT_VERSION ||
+           payload[0] == ST_COMMAND_LEGACY_CONTRACT_VERSION) &&
+          length != ST_COMMAND_V2_ACK_WIRE_SIZE) ||
+         (payload[0] != ST_COMMAND_CONTRACT_VERSION &&
+          payload[0] != ST_COMMAND_V2_CONTRACT_VERSION &&
+          payload[0] != ST_COMMAND_LEGACY_CONTRACT_VERSION)) ||
         payload[27] != 0U) {
         return -1;
     }
@@ -155,6 +173,11 @@ int st_command_ack_decode(const uint8_t *payload, size_t length, st_command_ack_
     ack->applied_config_revision = read_u32_le(&payload[28]);
     ack->timestamp_ms = read_u64_le(&payload[32]);
     ack->config_value = read_float_le(&payload[40]);
+    if (payload[0] == ST_COMMAND_CONTRACT_VERSION) {
+        ack->alarm_instance_id = read_u64_le(&payload[44]);
+        ack->capability_mask = read_u32_le(&payload[52]);
+        ack->ruleset_revision = read_u32_le(&payload[56]);
+    }
     return ack->pod_id[0] == '\0' ? -1 : 0;
 }
 
@@ -164,8 +187,12 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
     uint32_t kind;
 
     capabilities.command_mask = (1UL << ST_COMMAND_SET_RULE) |
-                                (1UL << ST_COMMAND_GET_RULE);
+                                (1UL << ST_COMMAND_GET_RULE) |
+                                (1UL << ST_COMMAND_GET_CAPABILITIES) |
+                                (1UL << ST_COMMAND_ACK_ALARM);
     capabilities.target_mask = 1UL << ST_COMMAND_TARGET_CAPABILITY_RULE;
+    capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_CAPABILITIES) |
+                                (1UL << ST_COMMAND_TARGET_ALARM);
     for (kind = 0U; kind < (uint32_t)ST_SENSOR_UNKNOWN; ++kind) {
         if (st_profile_has_capability(profile, (st_sensor_kind_t)kind)) {
             capabilities.capability_mask |= 1UL << kind;
@@ -177,6 +204,9 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
         capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_CO2_THRESHOLD) |
                                     (1UL << ST_COMMAND_TARGET_CONFIG);
     }
+    /* The final-board shared indicator remains electrically unverified.  C1
+     * therefore advertises no output capability and never enables GPIO19. */
+    capabilities.shared_alarm_indicator_verified = 0U;
     capabilities.pending_hardware_verification = 1U;
     return capabilities;
 }
@@ -192,7 +222,8 @@ static int state_valid(const st_command_persistent_state_t *state,
         state->history_count > ST_COMMAND_HISTORY_CAPACITY ||
         state->history_next >= ST_COMMAND_HISTORY_CAPACITY ||
         state->capability_config.schema_version != ST_CAPABILITY_CONFIG_SCHEMA_VERSION ||
-        state->capability_config.rule_count > ST_CAPABILITY_RULE_CAPACITY) {
+        state->capability_config.rule_count > ST_CAPABILITY_RULE_CAPACITY ||
+        !st_alarm_persistent_state_valid(&state->alarm_state, profile)) {
         return 0;
     }
     for (index = 0U; index < ST_CAPABILITY_RULE_CAPACITY; ++index) {
@@ -218,6 +249,17 @@ static int state_valid(const st_command_persistent_state_t *state,
         }
     }
     return used_count == state->capability_config.rule_count;
+}
+
+static int state_v2_valid(const st_command_persistent_state_t *state,
+                          st_pod_profile_t profile)
+{
+    st_command_persistent_state_t candidate = *state;
+    candidate.version = ST_COMMAND_PERSISTENCE_VERSION;
+    st_alarm_persistent_state_init(&candidate.alarm_state);
+    return state->magic == ST_COMMAND_PERSISTENCE_MAGIC &&
+           state->version == ST_COMMAND_V2_CONTRACT_VERSION &&
+           state_valid(&candidate, profile);
 }
 
 static int state_v1_valid(const st_command_persistent_state_t *state)
@@ -252,6 +294,7 @@ static void migrate_v1_state(st_command_persistent_state_t *state,
 
     state->version = ST_COMMAND_PERSISTENCE_VERSION;
     st_capability_config_init(&state->capability_config, profile);
+    st_alarm_persistent_state_init(&state->alarm_state);
     if (profile == ST_POD_ENVIRONMENT && revision >= 1U) {
         /* The environment defaults install this CO2 rule in slot zero. Preserve
          * the legacy revision directly so migration time is constant even for
@@ -262,8 +305,26 @@ static void migrate_v1_state(st_command_persistent_state_t *state,
     sync_legacy_co2_mirror(state);
 }
 
-int st_command_runtime_init(st_command_runtime_t *runtime, st_pod_profile_t profile,
-                            const char *pod_id, st_command_persistence_t persistence)
+static void migrate_v2_state(st_command_persistent_state_t *state)
+{
+    state->version = ST_COMMAND_PERSISTENCE_VERSION;
+    st_alarm_persistent_state_init(&state->alarm_state);
+}
+
+static int persist_alarm_state(void *context)
+{
+    st_command_runtime_t *runtime = (st_command_runtime_t *)context;
+    return runtime == NULL || runtime->persistence.save == NULL
+               ? 0
+               : runtime->persistence.save(runtime->persistence.context,
+                                           &runtime->persistent);
+}
+
+int st_command_runtime_init_with_boot(st_command_runtime_t *runtime,
+                                     st_pod_profile_t profile,
+                                     const char *pod_id,
+                                     st_command_persistence_t persistence,
+                                     uint32_t boot_id, uint64_t now_ms)
 {
     if (runtime == NULL || pod_id == NULL || pod_id[0] == '\0') {
         return -1;
@@ -276,12 +337,16 @@ int st_command_runtime_init(st_command_runtime_t *runtime, st_pod_profile_t prof
     runtime->persistent.magic = ST_COMMAND_PERSISTENCE_MAGIC;
     runtime->persistent.version = ST_COMMAND_PERSISTENCE_VERSION;
     st_capability_config_init(&runtime->persistent.capability_config, profile);
+    st_alarm_persistent_state_init(&runtime->persistent.alarm_state);
     sync_legacy_co2_mirror(&runtime->persistent);
     if (persistence.load != NULL) {
         st_command_persistent_state_t loaded;
         memset(&loaded, 0, sizeof(loaded));
         if (persistence.load(persistence.context, &loaded) == 0) {
             if (state_valid(&loaded, profile)) {
+                runtime->persistent = loaded;
+            } else if (state_v2_valid(&loaded, profile)) {
+                migrate_v2_state(&loaded);
                 runtime->persistent = loaded;
             } else if (state_v1_valid(&loaded)) {
                 migrate_v1_state(&loaded, profile);
@@ -290,7 +355,19 @@ int st_command_runtime_init(st_command_runtime_t *runtime, st_pod_profile_t prof
         }
     }
     sync_legacy_co2_mirror(&runtime->persistent);
-    return 0;
+    return st_alarm_runtime_init(
+        &runtime->alarm, runtime->pod_id,
+        &runtime->persistent.capability_config,
+        &runtime->persistent.alarm_state, runtime->capabilities.capability_mask,
+        boot_id, runtime->capabilities.shared_alarm_indicator_verified,
+        persist_alarm_state, runtime, now_ms);
+}
+
+int st_command_runtime_init(st_command_runtime_t *runtime, st_pod_profile_t profile,
+                            const char *pod_id, st_command_persistence_t persistence)
+{
+    return st_command_runtime_init_with_boot(runtime, profile, pod_id, persistence,
+                                             1U, 0U);
 }
 
 static const st_command_history_entry_t *find_history(const st_command_runtime_t *runtime,
@@ -354,9 +431,9 @@ static st_command_reason_t validate_common(const st_command_runtime_t *runtime,
                                            st_command_status_t *status)
 {
     if (command->command_id == 0U || command->command_type < ST_COMMAND_SET_THRESHOLD ||
-        command->command_type > ST_COMMAND_GET_RULE ||
+        command->command_type > ST_COMMAND_ACK_ALARM ||
         command->target < ST_COMMAND_TARGET_CO2_THRESHOLD ||
-        command->target > ST_COMMAND_TARGET_CAPABILITY_RULE ||
+        command->target > ST_COMMAND_TARGET_CAPABILITIES ||
         command->source < ST_COMMAND_SOURCE_THINGSBOARD ||
         command->source > ST_COMMAND_SOURCE_LOCAL_MAINTENANCE ||
         command->expires_at_ms <= command->issued_at_ms || command->valid_for_ms == 0U ||
@@ -417,6 +494,10 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
     st_sensor_kind_t capability = ST_SENSOR_UNKNOWN;
     st_config_rule_kind_t rule_kind = 0;
     st_config_result_t config_result;
+    size_t alarm_event_count;
+    uint8_t silence_active;
+    uint64_t silence_until_ms;
+    uint64_t silenced_instance_id;
 
     if (runtime == NULL || command == NULL || ack == NULL) {
         return -1;
@@ -426,32 +507,76 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
         set_ack(runtime, command, now_ms, ST_COMMAND_STATUS_DUPLICATE,
                 duplicate->reason, ack);
         ack->applied_config_revision = duplicate->applied_config_revision;
+        ack->alarm_instance_id = command->alarm_instance_id;
+        ack->capability_mask = runtime->capabilities.capability_mask;
+        ack->ruleset_revision = runtime->persistent.alarm_state.ruleset_revision;
         return 0;
     }
+    before = runtime->persistent;
+    alarm_event_count = runtime->alarm.event_count;
+    silence_active = runtime->alarm.silence_active;
+    silence_until_ms = runtime->alarm.silence_until_ms;
+    silenced_instance_id = runtime->alarm.silenced_instance_id;
     reason = validate_common(runtime, command, now_ms, &status);
-    if (reason == ST_COMMAND_REASON_NONE) {
+    if (reason == ST_COMMAND_REASON_NONE &&
+        (command->command_type == ST_COMMAND_SET_THRESHOLD ||
+         command->command_type == ST_COMMAND_GET_CONFIG ||
+         command->command_type == ST_COMMAND_SET_RULE ||
+         command->command_type == ST_COMMAND_GET_RULE)) {
         reason = resolve_rule_request(command, &capability, &rule_kind);
     }
-    if (reason == ST_COMMAND_REASON_NONE &&
-        command->command_type != ST_COMMAND_SET_THRESHOLD &&
-        command->command_type != ST_COMMAND_SET_RULE &&
-        command->command_type != ST_COMMAND_GET_RULE &&
-        command->command_type != ST_COMMAND_GET_CONFIG) {
-        reason = ST_COMMAND_REASON_UNSUPPORTED;
-    }
-    before = runtime->persistent;
     if (reason == ST_COMMAND_REASON_NONE &&
         (command->command_type == ST_COMMAND_GET_RULE ||
          command->command_type == ST_COMMAND_GET_CONFIG)) {
         config_result = st_capability_config_get(&runtime->persistent.capability_config,
                                                  capability, rule_kind, &rule);
         reason = config_result_reason(config_result);
-    } else if (reason == ST_COMMAND_REASON_NONE) {
+    } else if (reason == ST_COMMAND_REASON_NONE &&
+               (command->command_type == ST_COMMAND_SET_THRESHOLD ||
+                command->command_type == ST_COMMAND_SET_RULE)) {
         config_result = st_capability_config_set(&runtime->persistent.capability_config,
                                                  runtime->profile, capability, rule_kind,
                                                  command->value,
                                                  command->config_revision, &rule);
         reason = config_result_reason(config_result);
+        if (reason == ST_COMMAND_REASON_NONE &&
+            st_alarm_runtime_rule_changed(&runtime->alarm, &rule, now_ms) != 0) {
+            runtime->persistent = before;
+            runtime->alarm.event_count = alarm_event_count;
+            reason = ST_COMMAND_REASON_CONFIG_FULL;
+        }
+    } else if (reason == ST_COMMAND_REASON_NONE &&
+               command->command_type == ST_COMMAND_GET_CAPABILITIES &&
+               command->target != ST_COMMAND_TARGET_CAPABILITIES) {
+        reason = ST_COMMAND_REASON_INVALID_SYNTAX;
+    } else if (reason == ST_COMMAND_REASON_NONE &&
+               command->command_type == ST_COMMAND_ACK_ALARM) {
+        st_alarm_persist_fn saved_persist = runtime->alarm.persist;
+        int alarm_result;
+        if (command->target != ST_COMMAND_TARGET_ALARM ||
+            command->alarm_instance_id == 0U) {
+            reason = ST_COMMAND_REASON_INVALID_SYNTAX;
+        } else {
+            runtime->alarm.persist = NULL;
+            alarm_result = st_alarm_runtime_acknowledge(
+                &runtime->alarm, command->alarm_instance_id, now_ms);
+            runtime->alarm.persist = saved_persist;
+            if (alarm_result == -1) {
+                reason = ST_COMMAND_REASON_NOT_ACTIVE;
+            } else if (alarm_result != 0) {
+                reason = ST_COMMAND_REASON_PERSISTENCE_FAILED;
+            }
+        }
+    } else if (reason == ST_COMMAND_REASON_NONE &&
+               command->command_type == ST_COMMAND_SILENCE_ALARM) {
+        if (st_alarm_runtime_silence(&runtime->alarm,
+                                     command->alarm_instance_id,
+                                     command->duration_ms, now_ms) != 0) {
+            reason = ST_COMMAND_REASON_UNSUPPORTED;
+        }
+    } else if (reason == ST_COMMAND_REASON_NONE &&
+               command->command_type == ST_COMMAND_TEST_OUTPUT) {
+        reason = ST_COMMAND_REASON_UNSUPPORTED;
     }
     if (reason == ST_COMMAND_REASON_NONE) {
         sync_legacy_co2_mirror(&runtime->persistent);
@@ -459,11 +584,23 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
     }
     set_ack(runtime, command, now_ms, status, reason, ack);
     if (reason == ST_COMMAND_REASON_NONE) {
-        ack->applied_config_revision = rule.revision;
-        ack->config_value = rule.value;
+        if (command->command_type == ST_COMMAND_SET_THRESHOLD ||
+            command->command_type == ST_COMMAND_GET_CONFIG ||
+            command->command_type == ST_COMMAND_SET_RULE ||
+            command->command_type == ST_COMMAND_GET_RULE) {
+            ack->applied_config_revision = rule.revision;
+            ack->config_value = rule.value;
+        }
+        ack->alarm_instance_id = command->alarm_instance_id;
+        ack->capability_mask = runtime->capabilities.capability_mask;
+        ack->ruleset_revision = runtime->persistent.alarm_state.ruleset_revision;
     }
     if (persist_ack(runtime, ack) != 0) {
         runtime->persistent = before;
+        runtime->alarm.event_count = alarm_event_count;
+        runtime->alarm.silence_active = silence_active;
+        runtime->alarm.silence_until_ms = silence_until_ms;
+        runtime->alarm.silenced_instance_id = silenced_instance_id;
         set_ack(runtime, command, now_ms, ST_COMMAND_STATUS_FAILED,
                 ST_COMMAND_REASON_PERSISTENCE_FAILED, ack);
     }
@@ -492,6 +629,29 @@ int st_command_runtime_apply_reporting_rules(const st_command_runtime_t *runtime
                                  &runtime->persistent.capability_config, policy);
 }
 
+int st_command_runtime_ingest_reading(st_command_runtime_t *runtime,
+                                      const st_sensor_reading_t *reading,
+                                      uint64_t now_ms)
+{
+    return runtime == NULL ? -1
+                           : st_alarm_runtime_ingest(&runtime->alarm, reading,
+                                                     now_ms);
+}
+
+void st_command_runtime_tick(st_command_runtime_t *runtime, uint64_t now_ms)
+{
+    if (runtime != NULL) {
+        st_alarm_runtime_tick(&runtime->alarm, now_ms);
+    }
+}
+
+int st_command_runtime_next_control_event(st_command_runtime_t *runtime,
+                                          st_control_event_t *event)
+{
+    return runtime == NULL ? -1
+                           : st_alarm_runtime_next_event(&runtime->alarm, event);
+}
+
 const char *st_command_type_name(st_command_type_t type)
 {
     switch (type) {
@@ -501,6 +661,8 @@ const char *st_command_type_name(st_command_type_t type)
     case ST_COMMAND_GET_CONFIG: return "get_config";
     case ST_COMMAND_SET_RULE: return "set_rule";
     case ST_COMMAND_GET_RULE: return "get_rule";
+    case ST_COMMAND_GET_CAPABILITIES: return "get_capabilities";
+    case ST_COMMAND_ACK_ALARM: return "ack_alarm";
     default: return "unknown";
     }
 }
@@ -514,6 +676,7 @@ const char *st_command_target_name(st_command_target_t target)
     case ST_COMMAND_TARGET_BUZZER: return "buzzer";
     case ST_COMMAND_TARGET_CONFIG: return "config";
     case ST_COMMAND_TARGET_CAPABILITY_RULE: return "capability_rule";
+    case ST_COMMAND_TARGET_CAPABILITIES: return "capabilities";
     default: return "unknown";
     }
 }
@@ -548,6 +711,7 @@ const char *st_command_reason_name(st_command_reason_t reason)
     case ST_COMMAND_REASON_TIMEOUT: return "timeout";
     case ST_COMMAND_REASON_NOT_CONFIGURED: return "not_configured";
     case ST_COMMAND_REASON_CONFIG_FULL: return "config_full";
+    case ST_COMMAND_REASON_NOT_ACTIVE: return "not_active";
     default: return "unknown";
     }
 }

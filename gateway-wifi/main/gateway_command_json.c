@@ -92,7 +92,7 @@ static int parse_command_type(const char *name, st_command_type_t *type)
     if (name == NULL || type == NULL) {
         return -1;
     }
-    for (candidate = ST_COMMAND_SET_THRESHOLD; candidate <= ST_COMMAND_GET_RULE;
+    for (candidate = ST_COMMAND_SET_THRESHOLD; candidate <= ST_COMMAND_ACK_ALARM;
          candidate = (st_command_type_t)(candidate + 1)) {
         if (strcmp(name, st_command_type_name(candidate)) == 0) {
             *type = candidate;
@@ -110,7 +110,7 @@ static int parse_target(const char *name, st_command_target_t *target)
         return -1;
     }
     for (candidate = ST_COMMAND_TARGET_CO2_THRESHOLD;
-         candidate <= ST_COMMAND_TARGET_CAPABILITY_RULE;
+         candidate <= ST_COMMAND_TARGET_CAPABILITIES;
          candidate = (st_command_target_t)(candidate + 1)) {
         if (strcmp(name, st_command_target_name(candidate)) == 0) {
             *target = candidate;
@@ -176,7 +176,8 @@ int gw_command_json_parse(const char *topic, const char *payload,
     }
     if (json_u32(cJSON_GetObjectItemCaseSensitive(root, "schema_version"),
                  &schema_version, 0) != 0 ||
-        schema_version != ST_COMMAND_CONTRACT_VERSION ||
+        (schema_version != ST_COMMAND_CONTRACT_VERSION &&
+         schema_version != ST_COMMAND_V2_CONTRACT_VERSION) ||
         json_u64(cJSON_GetObjectItemCaseSensitive(root, "command_id"),
                  &command->command_id, 0) != 0 ||
         json_u64(cJSON_GetObjectItemCaseSensitive(root, "issued_at_ms"),
@@ -202,6 +203,10 @@ int gw_command_json_parse(const char *topic, const char *payload,
     item = cJSON_GetObjectItemCaseSensitive(root, "command_type");
     if (!cJSON_IsString(item) || parse_command_type(item->valuestring,
                                                     &command->command_type) != 0) {
+        goto done;
+    }
+    if (schema_version == ST_COMMAND_V2_CONTRACT_VERSION &&
+        command->command_type > ST_COMMAND_GET_RULE) {
         goto done;
     }
     item = cJSON_GetObjectItemCaseSensitive(root, "target");
@@ -232,6 +237,12 @@ int gw_command_json_parse(const char *topic, const char *payload,
             goto done;
         }
     }
+    item = cJSON_GetObjectItemCaseSensitive(root, "alarm_instance_id");
+    if ((command->command_type == ST_COMMAND_ACK_ALARM ||
+         command->command_type == ST_COMMAND_SILENCE_ALARM) &&
+        json_u64(item, &command->alarm_instance_id, 0) != 0) {
+        goto done;
+    }
     item = cJSON_GetObjectItemCaseSensitive(root, "duration_ms");
     if (item != NULL && json_u32(item, &command->duration_ms, 1) != 0) {
         goto done;
@@ -256,10 +267,15 @@ int gw_command_result_json(const st_command_ack_t *ack, char *json,
         json, json_capacity,
         "{\"schema_version\":%u,\"command_id\":%llu,\"pod_id\":\"%s\"," \
         "\"status\":\"%s\",\"reason\":\"%s\",\"applied_config_revision\":%lu," \
-        "\"timestamp_ms\":%llu,\"config_value\":%.3f}",
+        "\"timestamp_ms\":%llu,\"config_value\":%.3f," \
+        "\"alarm_instance_id\":%llu,\"capability_mask\":%lu," \
+        "\"ruleset_revision\":%lu}",
         ST_COMMAND_CONTRACT_VERSION, (unsigned long long)ack->command_id, ack->pod_id,
         st_command_status_name(ack->status), st_command_reason_name(ack->reason),
         (unsigned long)ack->applied_config_revision,
-        (unsigned long long)ack->timestamp_ms, (double)ack->config_value);
+        (unsigned long long)ack->timestamp_ms, (double)ack->config_value,
+        (unsigned long long)ack->alarm_instance_id,
+        (unsigned long)ack->capability_mask,
+        (unsigned long)ack->ruleset_revision);
     return written < 0 || (size_t)written >= json_capacity ? -1 : 0;
 }

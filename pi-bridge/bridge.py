@@ -8,7 +8,9 @@ import paho.mqtt.client as mqtt
 from tb_gateway_mqtt import TBGatewayMqttClient
 
 import config
-from bridge_core import COMMAND_RESULTS_TOPIC, RpcCommandBridge, telemetry_projection
+from bridge_core import (COMMAND_RESULTS_TOPIC, CONTROL_TOPIC,
+                         GATEWAY_INCIDENT_TOPIC, RpcCommandBridge,
+                         control_projection, telemetry_projection)
 
 
 LOG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -66,7 +68,9 @@ class LiveBridge:
         if reason_code == 0:
             client.subscribe(config.HIVEMQ_TOPIC, qos=1)
             client.subscribe(COMMAND_RESULTS_TOPIC, qos=1)
-            log.info("Connected to HiveMQ; telemetry and command-result subscriptions restored")
+            client.subscribe(CONTROL_TOPIC, qos=1)
+            client.subscribe(GATEWAY_INCIDENT_TOPIC, qos=1)
+            log.info("Connected to HiveMQ; telemetry, control and result subscriptions restored")
             self.command_bridge.tick()
         else:
             log.error("HiveMQ connection failed, reason_code=%s", reason_code)
@@ -100,7 +104,10 @@ class LiveBridge:
                      payload.get("pod_id"), payload.get("command_id"))
             return
         try:
-            pod_id, attributes, telemetry = telemetry_projection(payload)
+            if "event_kind" in payload:
+                pod_id, attributes, telemetry = control_projection(payload)
+            else:
+                pod_id, attributes, telemetry = telemetry_projection(payload)
         except ValueError as exc:
             log.warning("Rejected telemetry on %s: %s", message.topic, exc)
             return

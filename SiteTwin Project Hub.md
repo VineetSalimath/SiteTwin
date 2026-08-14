@@ -24,6 +24,7 @@ SiteTwin is a low-cost, modular digital twin sensing platform for indoor and wor
 - [[Pod and Sensor Strategy]]
 - [[Firmware Architecture]]
 - [[Gateway and Data Flow]]
+- [[docs/control-layer|Alarm and Gateway-State Control Layer]]
 - [[Validation and Implementation Plan]]
 - [[Hardware Bring-Up and Open Decisions]]
 - [[Source References]]
@@ -55,8 +56,11 @@ The three numbered fixed-development profiles now use reconciled ESP-IDF
 sensor compositions: SHT41, SCD41, and SGP40 on Pod 1; BH1750, PIR, and reed
 on Pod 2; and INA219, ADXL345, and DS18B20 on Pod 3. I2 adds portable,
 capability-targeted versioned configuration. I3 adds deterministic RPC
-correlation and the bidirectional Pi/MQTT/UART/Zigbee command transport while
-leaving alarm control, physical outputs, dashboards, and inference unchanged.
+correlation and the bidirectional Pi/MQTT/UART/Zigbee command transport. C1
+adds rule-derived alarm conditions, independent persisted acknowledgement,
+volatile silence semantics, target NVS composition, and a bounded coordinator
+freshness/multi-sensor incident engine. Physical outputs, dashboards, and
+ML-driven control remain unchanged and gated.
 
 Implemented and passing host tests:
 
@@ -73,6 +77,12 @@ Implemented and passing host tests:
 - gateway ingress, priority delivery queue, and JSON handoff pipeline
 - exact command/result correlation with timeout, duplicate, late-result, and
   reconnect handling
+- stable alarm instance transitions with rule/evidence and clear/retrigger
+- independent acknowledgement and silence state, including reboot reset
+- pod rule/configuration and alarm acknowledgement persistence in NVS
+- bounded gateway freshness, trend, multi-sensor evidence, incident transitions,
+  and coordinator-restart recovery
+- ThingsBoard attribute/telemetry separation for control state
 - deterministic fake sensors and a randomized stress harness
 
 For a step-by-step explanation of how these pieces call each other, see [[SiteTwin Data Flow - Beginner Guide]].
@@ -82,6 +92,8 @@ Not yet implemented or hardware-validated:
 - controlled vibration threshold characterization
 - ADC/module-identification, CD74HC4052M96 DATA-mux, and power-management adapters for the final universal-port hardware
 - live GPIO19 shared buzzer/LED control, pending electrical validation
+- physical validation of C1 NVS migration and control-event publication
+- ThingsBoard dashboard/rule-chain validation for the C1 projections
 - deep-sleep behavior, MQTT batching, and persistent outage buffering
 - real sensor characterization and final deadband tuning
 - final universal-port runtime and immediate hot-swap behavior; the board topology is locked, but measured electrical behavior remains a prerequisite

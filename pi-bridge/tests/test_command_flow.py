@@ -23,7 +23,7 @@ class DeterministicCommandPath:
         command = json.loads(payload)
         required = {"schema_version", "command_id", "pod_id", "command_type",
                     "target", "issued_at_ms", "valid_for_ms"}
-        if command["schema_version"] != 2 or not required.issubset(command):
+        if command["schema_version"] != 3 or not required.issubset(command):
             return False
         self.outbound.append((topic, command))
         return True
@@ -33,7 +33,7 @@ class DeterministicCommandPath:
 
     def deliver(self, index=0, status="executed", reason="none", now_ms=100):
         command = self.outbound[index][1]
-        result = {"schema_version": 2, "pod_id": command["pod_id"],
+        result = {"schema_version": 3, "pod_id": command["pod_id"],
                   "command_id": command["command_id"], "status": status,
                   "reason": reason, "timestamp_ms": now_ms,
                   "applied_config_revision": command.get("config_revision", 0),

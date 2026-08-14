@@ -1,4 +1,4 @@
-idf_component_register(SRCS "app_main.c"
+idf_component_register(SRCS "app_main.c" "control_persistence.c"
                        INCLUDE_DIRS "."
                        REQUIRES driver esp_timer nvs_flash sitetwin_core
                                 sitetwin_sensor_runtime sitetwin_sensors sitetwin_espidf_hal)

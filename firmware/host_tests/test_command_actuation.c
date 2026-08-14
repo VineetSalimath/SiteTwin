@@ -58,7 +58,7 @@ static st_command_t make_command(uint64_t id, st_command_type_t type,
     return command;
 }
 
-static int test_v2_and_legacy_codecs(void)
+static int test_v3_and_legacy_codecs(void)
 {
     st_command_t input = make_command(101U, ST_COMMAND_SET_RULE,
                                       ST_COMMAND_TARGET_CAPABILITY_RULE);
@@ -76,12 +76,16 @@ static int test_v2_and_legacy_codecs(void)
     EXPECT(output.capability == ST_SENSOR_VOC_INDEX);
     EXPECT(output.rule_kind == ST_CONFIG_RULE_REPORT_DEADBAND);
 
+    payload[0] = ST_COMMAND_V2_CONTRACT_VERSION;
+    EXPECT(st_command_decode(payload, ST_COMMAND_V2_WIRE_SIZE, &output) == 0);
+    EXPECT(output.capability == ST_SENSOR_VOC_INDEX);
+
     payload[0] = ST_COMMAND_LEGACY_CONTRACT_VERSION;
     payload[1] = ST_COMMAND_SET_THRESHOLD;
     payload[2] = ST_COMMAND_TARGET_CO2_THRESHOLD;
     payload[60] = 0U;
     payload[61] = 0U;
-    EXPECT(st_command_decode(payload, length, &output) == 0);
+    EXPECT(st_command_decode(payload, ST_COMMAND_V2_WIRE_SIZE, &output) == 0);
     EXPECT(output.capability == ST_SENSOR_CO2_PPM);
     EXPECT(output.rule_kind == ST_CONFIG_RULE_NUMERIC_HIGH_THRESHOLD);
     return 0;
@@ -109,6 +113,7 @@ static int test_capability_rules_and_legacy_threshold(void)
     EXPECT(st_command_runtime_handle(&runtime, &command, 2000U, &ack) == 0);
     EXPECT(ack.status == ST_COMMAND_STATUS_EXECUTED);
     EXPECT(ack.applied_config_revision == 2U);
+    EXPECT(ack.ruleset_revision == 2U);
     EXPECT(runtime.persistent.config.co2_threshold_ppm == 1200.0F);
 
     command = make_command(2U, ST_COMMAND_SET_RULE,
@@ -119,6 +124,7 @@ static int test_capability_rules_and_legacy_threshold(void)
     command.config_revision = 1U;
     EXPECT(st_command_runtime_handle(&runtime, &command, 2100U, &ack) == 0);
     EXPECT(ack.status == ST_COMMAND_STATUS_EXECUTED);
+    EXPECT(ack.ruleset_revision == 3U);
     EXPECT(st_command_runtime_get_rule(&runtime, ST_SENSOR_VOC_INDEX,
                                        ST_CONFIG_RULE_REPORT_DEADBAND, &rule) == 0);
     EXPECT(rule.value == 8.0F && rule.revision == 1U);
@@ -215,12 +221,42 @@ static int test_persistence_migration_and_idempotency(void)
     return 0;
 }
 
+static int test_v2_persistence_migration(void)
+{
+    fake_persistence_t fake;
+    st_command_runtime_t runtime;
+    st_capability_rule_t rule;
+    st_command_persistence_t persistence = {&fake, fake_load, fake_save};
+
+    memset(&fake, 0, sizeof(fake));
+    fake.has_state = 1;
+    fake.stored.magic = ST_COMMAND_PERSISTENCE_MAGIC;
+    fake.stored.version = ST_COMMAND_V2_CONTRACT_VERSION;
+    fake.stored.config.co2_threshold_ppm = ST_CAPABILITY_DEFAULT_CO2_THRESHOLD_PPM;
+    fake.stored.config.revision = 1U;
+    st_capability_config_init(&fake.stored.capability_config,
+                              ST_POD_ENVIRONMENT);
+
+    EXPECT(st_command_runtime_init(&runtime, ST_POD_ENVIRONMENT, "POD_1",
+                                   persistence) == 0);
+    EXPECT(runtime.persistent.version == ST_COMMAND_PERSISTENCE_VERSION);
+    EXPECT(runtime.persistent.alarm_state.version ==
+           ST_ALARM_PERSISTENCE_VERSION);
+    EXPECT(runtime.persistent.alarm_state.ruleset_revision == 1U);
+    EXPECT(st_command_runtime_get_rule(&runtime, ST_SENSOR_CO2_PPM,
+                                       ST_CONFIG_RULE_NUMERIC_HIGH_THRESHOLD,
+                                       &rule) == 0);
+    EXPECT(rule.value == ST_CAPABILITY_DEFAULT_CO2_THRESHOLD_PPM);
+    return 0;
+}
+
 int st_run_command_actuation_tests(void)
 {
     int failures = 0;
-    failures += test_v2_and_legacy_codecs();
+    failures += test_v3_and_legacy_codecs();
     failures += test_capability_rules_and_legacy_threshold();
     failures += test_state_event_rules_and_revision_scope();
     failures += test_persistence_migration_and_idempotency();
+    failures += test_v2_persistence_migration();
     return failures;
 }

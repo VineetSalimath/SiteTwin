@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "sitetwin/command.h"
+#include "sitetwin/control_event.h"
 #include "sitetwin/gateway_identity.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/zigbee_payload.h"
@@ -44,7 +45,7 @@ static int gateway_pipeline_publish_next(const char *pod_id)
 
 static int gateway_pipeline_publish_command_result(const st_command_ack_t *ack)
 {
-    char json[320];
+    char json[512];
     char topic[96];
 
     if (gw_command_result_json(ack, json, sizeof(json)) != 0) {
@@ -59,6 +60,32 @@ static int gateway_pipeline_publish_command_result(const st_command_ack_t *ack)
     }
     ESP_LOGI(TAG, "Published command result %llu: %s",
              (unsigned long long)ack->command_id, json);
+    return 0;
+}
+
+static int gateway_pipeline_publish_control_event(const uint8_t *payload,
+                                                  size_t payload_length)
+{
+    st_control_event_t event;
+    char json[1024];
+    char topic[96];
+
+    if (st_control_event_decode(payload, payload_length, &event) != 0 ||
+        st_control_event_to_json(&event, json, sizeof(json)) != 0) {
+        ESP_LOGW(TAG, "Rejected invalid control event");
+        return -1;
+    }
+    if (event.event_kind == ST_CONTROL_EVENT_GATEWAY_INCIDENT) {
+        snprintf(topic, sizeof(topic), "sitetwin/gateway/incidents");
+    } else {
+        snprintf(topic, sizeof(topic), "sitetwin/pods/%s/control", event.pod_id);
+    }
+    if (gw_mqtt_publish(topic, json) != 0) {
+        ESP_LOGW(TAG, "Control-event publish failed for %s", event.pod_id);
+        return -1;
+    }
+    ESP_LOGI(TAG, "Published %s transition for %s",
+             st_control_event_kind_name(event.event_kind), event.pod_id);
     return 0;
 }
 
@@ -123,6 +150,10 @@ int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
             return -1;
         }
         return gateway_pipeline_publish_command_result(&ack);
+    }
+    if (header->message_type == ST_GATEWAY_MESSAGE_CONTROL_EVENT) {
+        return gateway_pipeline_publish_control_event(payload,
+                                                      header->payload_length);
     }
 
     if ((header->message_type != ST_GATEWAY_MESSAGE_TELEMETRY &&

@@ -4,14 +4,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sitetwin/alarm.h"
 #include "sitetwin/capability_config.h"
 #include "sitetwin/contracts.h"
 
-#define ST_COMMAND_CONTRACT_VERSION 2U
+#define ST_COMMAND_CONTRACT_VERSION 3U
+#define ST_COMMAND_V2_CONTRACT_VERSION 2U
 #define ST_COMMAND_LEGACY_CONTRACT_VERSION 1U
-#define ST_COMMAND_PERSISTENCE_VERSION 2U
-#define ST_COMMAND_WIRE_SIZE 64U
-#define ST_COMMAND_ACK_WIRE_SIZE 44U
+#define ST_COMMAND_PERSISTENCE_VERSION 3U
+#define ST_COMMAND_WIRE_SIZE 72U
+#define ST_COMMAND_V2_WIRE_SIZE 64U
+#define ST_COMMAND_ACK_WIRE_SIZE 60U
+#define ST_COMMAND_V2_ACK_WIRE_SIZE 44U
 #define ST_COMMAND_HISTORY_CAPACITY 8U
 #define ST_COMMAND_DEFAULT_CO2_THRESHOLD_PPM ST_CAPABILITY_DEFAULT_CO2_THRESHOLD_PPM
 #define ST_COMMAND_MIN_CO2_THRESHOLD_PPM 400.0F
@@ -24,7 +28,9 @@ typedef enum {
     ST_COMMAND_TEST_OUTPUT,
     ST_COMMAND_GET_CONFIG,
     ST_COMMAND_SET_RULE,
-    ST_COMMAND_GET_RULE
+    ST_COMMAND_GET_RULE,
+    ST_COMMAND_GET_CAPABILITIES,
+    ST_COMMAND_ACK_ALARM
 } st_command_type_t;
 
 typedef enum {
@@ -33,7 +39,8 @@ typedef enum {
     ST_COMMAND_TARGET_LED,
     ST_COMMAND_TARGET_BUZZER,
     ST_COMMAND_TARGET_CONFIG,
-    ST_COMMAND_TARGET_CAPABILITY_RULE
+    ST_COMMAND_TARGET_CAPABILITY_RULE,
+    ST_COMMAND_TARGET_CAPABILITIES
 } st_command_target_t;
 
 typedef enum {
@@ -64,7 +71,8 @@ typedef enum {
     ST_COMMAND_REASON_TRANSPORT_FAILED,
     ST_COMMAND_REASON_TIMEOUT,
     ST_COMMAND_REASON_NOT_CONFIGURED,
-    ST_COMMAND_REASON_CONFIG_FULL
+    ST_COMMAND_REASON_CONFIG_FULL,
+    ST_COMMAND_REASON_NOT_ACTIVE
 } st_command_reason_t;
 
 typedef struct {
@@ -80,6 +88,7 @@ typedef struct {
     uint64_t expires_at_ms;
     uint32_t valid_for_ms;
     uint32_t config_revision;
+    uint64_t alarm_instance_id;
     st_command_source_t source;
 } st_command_t;
 
@@ -91,6 +100,9 @@ typedef struct {
     uint32_t applied_config_revision;
     uint64_t timestamp_ms;
     float config_value;
+    uint64_t alarm_instance_id;
+    uint32_t capability_mask;
+    uint32_t ruleset_revision;
 } st_command_ack_t;
 
 /* Prefix retained for migration of the version-1 CO2-only NVS blob. */
@@ -116,9 +128,11 @@ typedef struct {
     st_pod_command_config_t config;
     st_command_history_entry_t history[ST_COMMAND_HISTORY_CAPACITY];
     st_capability_config_t capability_config;
+    st_alarm_persistent_state_t alarm_state;
 } st_command_persistent_state_t;
 
 #define ST_COMMAND_PERSISTENCE_V1_SIZE offsetof(st_command_persistent_state_t, capability_config)
+#define ST_COMMAND_PERSISTENCE_V2_SIZE offsetof(st_command_persistent_state_t, alarm_state)
 
 typedef struct {
     void *context;
@@ -131,6 +145,7 @@ typedef struct {
     uint32_t target_mask;
     uint32_t capability_mask;
     uint8_t pending_hardware_verification;
+    uint8_t shared_alarm_indicator_verified;
 } st_pod_capabilities_t;
 
 typedef struct {
@@ -139,6 +154,7 @@ typedef struct {
     st_pod_capabilities_t capabilities;
     st_command_persistence_t persistence;
     st_command_persistent_state_t persistent;
+    st_alarm_runtime_t alarm;
 } st_command_runtime_t;
 
 int st_command_encode(const st_command_t *command, uint8_t *payload,
@@ -151,6 +167,11 @@ int st_command_ack_decode(const uint8_t *payload, size_t length, st_command_ack_
 st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile);
 int st_command_runtime_init(st_command_runtime_t *runtime, st_pod_profile_t profile,
                             const char *pod_id, st_command_persistence_t persistence);
+int st_command_runtime_init_with_boot(st_command_runtime_t *runtime,
+                                     st_pod_profile_t profile,
+                                     const char *pod_id,
+                                     st_command_persistence_t persistence,
+                                     uint32_t boot_id, uint64_t now_ms);
 int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t *command,
                               uint64_t now_ms, st_command_ack_t *ack);
 int st_command_runtime_get_rule(const st_command_runtime_t *runtime,
@@ -159,6 +180,12 @@ int st_command_runtime_get_rule(const st_command_runtime_t *runtime,
                                 st_capability_rule_t *rule);
 int st_command_runtime_apply_reporting_rules(const st_command_runtime_t *runtime,
                                              st_reporting_policy_t *policy);
+int st_command_runtime_ingest_reading(st_command_runtime_t *runtime,
+                                      const st_sensor_reading_t *reading,
+                                      uint64_t now_ms);
+void st_command_runtime_tick(st_command_runtime_t *runtime, uint64_t now_ms);
+int st_command_runtime_next_control_event(st_command_runtime_t *runtime,
+                                          st_control_event_t *event);
 
 const char *st_command_type_name(st_command_type_t type);
 const char *st_command_target_name(st_command_target_t target);

@@ -8,10 +8,13 @@ import re
 import time
 
 
-COMMAND_SCHEMA_VERSION = 2
+COMMAND_SCHEMA_VERSION = 3
+CONTROL_SCHEMA_VERSION = 1
 MAX_EXACT_JSON_INTEGER = (1 << 53) - 1
 COMMAND_TOPIC = "sitetwin/pods/{pod_id}/commands"
 COMMAND_RESULTS_TOPIC = "sitetwin/pods/+/command_results"
+CONTROL_TOPIC = "sitetwin/pods/+/control"
+GATEWAY_INCIDENT_TOPIC = "sitetwin/gateway/incidents"
 POD_ID_PATTERN = re.compile(r"^POD_[1-9][0-9]*$")
 TERMINAL_STATUSES = {"executed", "rejected", "expired", "duplicate", "failed"}
 CAPABILITIES = {
@@ -36,6 +39,19 @@ RULE_KINDS = {
     "event_retrigger_ms",
     "state_active_value",
 }
+CAPABILITY_ORDER = (
+    "temperature_c",
+    "relative_humidity_percent",
+    "co2_ppm",
+    "voc_index",
+    "illuminance_lux",
+    "motion",
+    "contact",
+    "current_ma",
+    "voltage_v",
+    "vibration_rms_g",
+)
+SHARED_ALARM_INDICATOR_BIT = 1 << 31
 
 
 class InvalidRpc(ValueError):
@@ -48,6 +64,8 @@ class PendingRequest:
     request_id: int
     command_id: int
     deadline_ms: int
+    method: str
+    alarm_instance_id: int = 0
 
 
 @dataclass
@@ -137,10 +155,23 @@ def command_from_rpc(content, now_ms):
                                          "config_revision", minimum=1,
                                          maximum=(1 << 32) - 1),
             )
-    elif method in {"silence_alarm", "test_output"}:
+    elif method == "get_capabilities":
+        command["target"] = "capabilities"
+    elif method == "ack_alarm":
         command["target"] = "alarm"
-        command["duration_ms"] = _integer(params.get("duration_ms", 0),
-                                           "duration_ms", minimum=0,
+        command["alarm_instance_id"] = _integer(
+            params.get("alarm_instance_id"), "alarm_instance_id", minimum=1)
+    elif method == "silence_alarm":
+        command["target"] = "alarm"
+        command["alarm_instance_id"] = _integer(
+            params.get("alarm_instance_id"), "alarm_instance_id", minimum=1)
+        command["duration_ms"] = _integer(params.get("duration_ms"),
+                                           "duration_ms", minimum=1,
+                                           maximum=60000)
+    elif method == "test_output":
+        command["target"] = "alarm"
+        command["duration_ms"] = _integer(params.get("duration_ms", 1000),
+                                           "duration_ms", minimum=1,
                                            maximum=60000)
     else:
         raise InvalidRpc("unknown RPC method")
@@ -182,6 +213,103 @@ def telemetry_projection(payload):
     for field in ("sequence", "uptime_ms", "quality_flags"):
         if field in payload:
             telemetry[f"{prefix}_{field}"] = payload[field]
+    return pod_id, attributes, telemetry
+
+
+def _safe_token(value, name):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise ValueError(f"{name} must be a safe token")
+    return value
+
+
+def control_projection(payload):
+    """Split versioned control events into TB attributes and telemetry."""
+    if not isinstance(payload, dict) or payload.get("schema_version") != CONTROL_SCHEMA_VERSION:
+        raise ValueError("invalid control-event schema")
+    event_kind = _safe_token(payload.get("event_kind"), "event_kind")
+    pod_id = _safe_token(payload.get("pod_id"), "pod_id")
+    sensor_id = _safe_token(payload.get("sensor_id"), "sensor_id")
+    transition = _safe_token(payload.get("transition"), "transition")
+    reason = _safe_token(payload.get("reason"), "reason")
+    instance_id = _integer(payload.get("instance_id", 0), "instance_id")
+    timestamp_ms = _integer(payload.get("timestamp_ms", 0), "timestamp_ms")
+    attributes = {}
+    telemetry = {}
+
+    if event_kind == "capabilities":
+        mask = _integer(payload.get("capability_mask", 0), "capability_mask",
+                        maximum=(1 << 32) - 1)
+        attributes.update(
+            control_contract_version=CONTROL_SCHEMA_VERSION,
+            capability_mask=mask,
+            capabilities=[name for bit, name in enumerate(CAPABILITY_ORDER)
+                          if mask & (1 << bit)],
+            shared_alarm_indicator=bool(
+                payload.get("shared_alarm_indicator_verified", False)),
+        )
+        telemetry["ruleset_revision"] = _integer(
+            payload.get("ruleset_revision", 0), "ruleset_revision",
+            maximum=(1 << 32) - 1)
+    elif event_kind == "configuration":
+        capability = _safe_token(payload.get("capability"), "capability")
+        rule_kind = _safe_token(payload.get("rule_kind"), "rule_kind")
+        prefix = f"rule_{capability}_{rule_kind}"
+        attributes[f"{prefix}_value"] = _finite_number(payload.get("threshold"),
+                                                         "threshold")
+        telemetry[f"{prefix}_revision"] = _integer(
+            payload.get("config_revision", 0), "config_revision",
+            maximum=(1 << 32) - 1)
+        telemetry["ruleset_revision"] = _integer(
+            payload.get("ruleset_revision", 0), "ruleset_revision",
+            maximum=(1 << 32) - 1)
+        telemetry[f"{prefix}_changed"] = transition == "updated"
+    elif event_kind in {"alarm_condition", "alarm_acknowledgement"}:
+        if instance_id == 0:
+            raise ValueError("alarm event requires instance_id")
+        capability = _safe_token(payload.get("capability"), "capability")
+        rule_kind = _safe_token(payload.get("rule_kind"), "rule_kind")
+        prefix = f"alarm_{capability}_{rule_kind}"
+        telemetry[f"{prefix}_instance_id"] = instance_id
+        telemetry[f"{prefix}_sensor_id"] = sensor_id
+        telemetry[f"{prefix}_threshold"] = _finite_number(
+            payload.get("threshold", 0.0), "threshold")
+        telemetry[f"{prefix}_active"] = bool(payload.get("active", False))
+        telemetry[f"{prefix}_acknowledged"] = bool(
+            payload.get("acknowledged", False))
+        telemetry[f"{prefix}_observed"] = _finite_number(
+            payload.get("observed", 0.0), "observed")
+        telemetry[f"{prefix}_quality_flags"] = _integer(
+            payload.get("quality_flags", 0), "quality_flags",
+            maximum=(1 << 32) - 1)
+        telemetry[f"{prefix}_transition"] = transition
+        telemetry[f"{prefix}_reason"] = reason
+    elif event_kind == "alarm_silence":
+        telemetry.update(
+            alarm_silenced=bool(payload.get("silenced", False)),
+            silenced_instance_id=instance_id,
+            alarm_silence_transition=transition,
+            alarm_silence_reason=reason,
+        )
+    elif event_kind == "gateway_incident":
+        prefix = f"incident_{pod_id}_{sensor_id}"
+        attributes[f"{prefix}_source_pod"] = pod_id
+        attributes[f"{prefix}_kind"] = sensor_id
+        telemetry[f"{prefix}_instance_id"] = instance_id
+        telemetry[f"{prefix}_active"] = bool(payload.get("active", False))
+        telemetry[f"{prefix}_transition"] = transition
+        telemetry[f"{prefix}_reason"] = reason
+        telemetry[f"{prefix}_evidence_count"] = _integer(
+            payload.get("evidence_count", 0), "evidence_count", maximum=255)
+        telemetry[f"{prefix}_primary"] = _finite_number(
+            payload.get("observed", 0.0), "observed")
+        telemetry[f"{prefix}_secondary"] = _finite_number(
+            payload.get("secondary_observed", 0.0), "secondary_observed")
+        telemetry[f"{prefix}_trend"] = _finite_number(
+            payload.get("trend", 0.0), "trend")
+        pod_id = "GATEWAY_1"
+    else:
+        raise ValueError("unknown control-event kind")
+    telemetry["control_timestamp_ms"] = timestamp_ms
     return pod_id, attributes, telemetry
 
 
@@ -270,8 +398,10 @@ class RpcCommandBridge:
             self._complete(key, response, now_ms)
             return "failed"
         command["command_id"] = command_id
-        self.pending[key] = PendingRequest(pod_id, request_id, command_id,
-                                           now_ms + command["valid_for_ms"])
+        self.pending[key] = PendingRequest(
+            pod_id, request_id, command_id,
+            now_ms + command["valid_for_ms"], command["command_type"],
+            command.get("alarm_instance_id", 0))
         self.pending_by_command[command_id] = key
         topic = COMMAND_TOPIC.format(pod_id=pod_id)
         try:
@@ -295,7 +425,7 @@ class RpcCommandBridge:
         command_id = payload.get("command_id")
         status = payload.get("status")
         reason = payload.get("reason")
-        if (payload.get("schema_version") != COMMAND_SCHEMA_VERSION or
+        if (payload.get("schema_version") not in {2, COMMAND_SCHEMA_VERSION} or
                 not isinstance(pod_id, str) or isinstance(command_id, bool) or
                 not isinstance(command_id, int) or status not in TERMINAL_STATUSES or
                 not isinstance(reason, str)):
@@ -305,8 +435,22 @@ class RpcCommandBridge:
             return "late" if command_id in self.completed_commands else "uncorrelated"
         if key[0] != pod_id:
             return "uncorrelated"
+        pending = self.pending[key]
         response = dict(payload)
         response["schema_version"] = COMMAND_SCHEMA_VERSION
+        if pending.method == "get_capabilities" and status == "executed":
+            mask = response.get("capability_mask", 0)
+            if isinstance(mask, int) and not isinstance(mask, bool):
+                response["shared_alarm_indicator"] = bool(
+                    mask & SHARED_ALARM_INDICATOR_BIT)
+                sensor_mask = mask & ~SHARED_ALARM_INDICATOR_BIT
+                response["capability_mask"] = sensor_mask
+                response["capabilities"] = [
+                    name for bit, name in enumerate(CAPABILITY_ORDER)
+                    if sensor_mask & (1 << bit)
+                ]
+        if pending.alarm_instance_id:
+            response["alarm_instance_id"] = pending.alarm_instance_id
         self._complete(key, response, now_ms)
         return "completed"
 

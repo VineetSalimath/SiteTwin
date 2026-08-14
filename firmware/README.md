@@ -19,7 +19,7 @@ From this directory, run:
 powershell -ExecutionPolicy Bypass -File .\host_tests\run-tests.ps1
 ```
 
-The test suite covers module detection/removal, warm-up quality flags, change suppression and heartbeat reporting, monotonically increasing sensor sequences, event priority, latest-value replacement, PIR stabilization and duplicate suppression, ADXL345 FIFO/RMS/clipping behaviour, DS18B20 CRC/signed decoding/non-blocking conversion/removal recovery, a compact Zigbee payload round trip, gateway node rejoin/address changes, duplicate/stale rejection, binary gateway frame integrity, canonical gateway JSON, delivery queue pressure, and a randomized stress harness.
+The test suite covers module detection/removal, warm-up quality flags, change suppression and heartbeat reporting, monotonically increasing sensor sequences, event priority, latest-value replacement, PIR stabilization and duplicate suppression, ADXL345 FIFO/RMS/clipping behaviour, DS18B20 CRC/signed decoding/non-blocking conversion/removal recovery, Zigbee telemetry/command/control payloads, gateway node rejoin/address changes, duplicate/stale rejection, alarm condition/acknowledgement/silence transitions, state debounce, coordinator stale/multi-sensor incidents and restart recovery, binary gateway frame integrity, canonical gateway JSON, delivery queue pressure, and a randomized stress harness.
 
 ## Pod profiles
 
@@ -69,19 +69,26 @@ not published, so SHT41 remains the sole temperature/humidity authority.
 
 ## Capability-targeted configuration
 
-Portable command contract v2 stores bounded rules by pod capability and rule
+Portable command contract v3 stores bounded rules by pod capability and rule
 kind, with a revision for each individual rule. Numeric rules cover thresholds,
 deadbands, and reporting intervals; motion/contact rules cover debounce,
 retrigger, and active-state values. Legacy v1 Environment Pod
 `set_threshold/co2_threshold_ppm` maps to the versioned CO2 high-threshold
 rule, and legacy `get_config` reads that same value.
 
-The full alarm condition/acknowledgement/silence layer is not part of I3.
-`silence_alarm` and `test_output` are explicitly unsupported, no output driver
-is composed, and GPIO19 is never driven. I3 carries configuration commands and
-their exact results through Pi MQTT, gateway-Wi-Fi UART, Zigbee, and the pod
-runtime. This is target compilation and deterministic host validation, not a
-deployed or physically validated end-to-end claim.
+C1 evaluates those rules into stable alarm-condition instances with independent
+acknowledgement and silence state. Rules, revisions, command history, active
+conditions, and acknowledgement state persist in default NVS. Silence is
+volatile; a reboot cancels it and publishes `reboot_reset`. The coordinator
+adds bounded freshness, trend-window, stale, and multi-sensor incident state
+with restart recovery. Commands, results, and control events traverse Pi MQTT,
+gateway-Wi-Fi UART, Zigbee, and the pod runtime.
+
+`silence_alarm` and `test_output` remain explicitly unsupported because no pod
+advertises a verified shared alarm indicator. No output driver is composed and
+GPIO19 is never driven. This is target compilation and deterministic host
+validation, not a deployed or physically validated end-to-end claim. See
+`../docs/control-layer.md`.
 
 ## Final-board contract and feature gates
 

@@ -56,7 +56,7 @@ class BridgeCoreTests(unittest.TestCase):
         self.assertEqual(self.bridge.handle_rpc(rpc, 3000), "pending")
         self.assertEqual(self.bridge.handle_rpc(rpc, 3001), "duplicate")
         command_id = self.io.published[0][1]["command_id"]
-        result = {"schema_version": 2, "pod_id": "POD_1", "command_id": command_id,
+        result = {"schema_version": 3, "pod_id": "POD_1", "command_id": command_id,
                   "status": "executed", "reason": "none", "timestamp_ms": 10,
                   "applied_config_revision": 1, "config_value": 1000.0}
         self.assertEqual(self.bridge.handle_command_result(result, 3010), "completed")
@@ -89,7 +89,7 @@ class BridgeCoreTests(unittest.TestCase):
         self.assertEqual(len(self.io.replies), 1)
         self.assertEqual(self.io.replies[0][2]["reason"], "timeout")
         command_id = self.io.published[0][1]["command_id"]
-        result = {"schema_version": 2, "pod_id": "POD_3", "command_id": command_id,
+        result = {"schema_version": 3, "pod_id": "POD_3", "command_id": command_id,
                   "status": "executed", "reason": "none", "timestamp_ms": 20}
         self.assertEqual(self.bridge.handle_command_result(result, 5200), "late")
         self.assertEqual(len(self.io.replies), 1)
