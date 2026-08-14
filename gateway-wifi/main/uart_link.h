@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sitetwin/gateway_frame.h"
+
 /* Initializes the UART peripheral and starts the background receive task.
  *
  * UART1 receives the matching Zigbee gateway's default GPIO4 TX on GPIO5 at
@@ -11,6 +13,9 @@
  * comes from the shared, already-tested gateway_frame.c.
  */
 void uart_link_init(void);
+int uart_link_send_payload(st_gateway_message_type_t message_type,
+                           const uint8_t *payload, uint16_t payload_length,
+                           uint32_t sequence);
 
 /* Feeds a byte sequence directly into the frame parser, bypassing the UART
  * peripheral. Used to self-test the framing/CRC parsing logic without a

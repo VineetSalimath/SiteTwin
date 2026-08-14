@@ -76,10 +76,12 @@ retrigger, and active-state values. Legacy v1 Environment Pod
 `set_threshold/co2_threshold_ppm` maps to the versioned CO2 high-threshold
 rule, and legacy `get_config` reads that same value.
 
-The full alarm condition/acknowledgement/silence layer is not part of I2.
+The full alarm condition/acknowledgement/silence layer is not part of I3.
 `silence_alarm` and `test_output` are explicitly unsupported, no output driver
-is composed, and GPIO19 is never driven. Gateway-Wi-Fi, Pi bridge, and
-ThingsBoard parsing are unchanged, so this is not an end-to-end command claim.
+is composed, and GPIO19 is never driven. I3 carries configuration commands and
+their exact results through Pi MQTT, gateway-Wi-Fi UART, Zigbee, and the pod
+runtime. This is target compilation and deterministic host validation, not a
+deployed or physically validated end-to-end claim.
 
 ## Final-board contract and feature gates
 

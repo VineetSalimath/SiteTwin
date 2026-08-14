@@ -20,6 +20,8 @@ int st_run_ds18b20_tests(void);
 int st_run_scd41_tests(void);
 int st_run_sgp40_tests(void);
 int st_run_command_actuation_tests(void);
+int st_run_command_transport_tests(void);
+int st_run_gateway_identity_tests(void);
 
 #define EXPECT(condition)                                                                        \
     do {                                                                                         \
@@ -704,6 +706,8 @@ int main(void)
     failures += st_run_scd41_tests();
     failures += st_run_sgp40_tests();
     failures += st_run_command_actuation_tests();
+    failures += st_run_command_transport_tests();
+    failures += st_run_gateway_identity_tests();
     failures += test_stress_runtime_and_gateway();
 
     if (failures != 0) {

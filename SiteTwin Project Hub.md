@@ -54,8 +54,9 @@ The project is no longer "one smart node with every sensor attached." The strong
 The three numbered fixed-development profiles now use reconciled ESP-IDF
 sensor compositions: SHT41, SCD41, and SGP40 on Pod 1; BH1750, PIR, and reed
 on Pod 2; and INA219, ADXL345, and DS18B20 on Pod 3. I2 adds portable,
-capability-targeted versioned configuration while leaving the gateway-Wi-Fi,
-Raspberry Pi, ThingsBoard, alarm-control, and physical-output paths unchanged.
+capability-targeted versioned configuration. I3 adds deterministic RPC
+correlation and the bidirectional Pi/MQTT/UART/Zigbee command transport while
+leaving alarm control, physical outputs, dashboards, and inference unchanged.
 
 Implemented and passing host tests:
 
@@ -70,6 +71,8 @@ Implemented and passing host tests:
 - fixed 30-byte Zigbee telemetry encoding and decoding
 - gateway node registry with IEEE-address rejoin and short-address remapping
 - gateway ingress, priority delivery queue, and JSON handoff pipeline
+- exact command/result correlation with timeout, duplicate, late-result, and
+  reconnect handling
 - deterministic fake sensors and a randomized stress harness
 
 For a step-by-step explanation of how these pieces call each other, see [[SiteTwin Data Flow - Beginner Guide]].

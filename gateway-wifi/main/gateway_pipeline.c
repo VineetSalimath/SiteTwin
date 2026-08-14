@@ -2,10 +2,14 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "sitetwin/command.h"
+#include "sitetwin/gateway_identity.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/zigbee_payload.h"
+#include "gateway_command_json.h"
 #include "gateway_pipeline.h"
 #include "mqtt_publish.h"
+#include "uart_link.h"
 
 static const char *TAG = "gw_pipeline";
 
@@ -38,6 +42,65 @@ static int gateway_pipeline_publish_next(const char *pod_id)
     return 0;
 }
 
+static int gateway_pipeline_publish_command_result(const st_command_ack_t *ack)
+{
+    char json[320];
+    char topic[96];
+
+    if (gw_command_result_json(ack, json, sizeof(json)) != 0) {
+        ESP_LOGW(TAG, "Rejected invalid command result");
+        return -1;
+    }
+    snprintf(topic, sizeof(topic), "sitetwin/pods/%s/command_results", ack->pod_id);
+    if (gw_mqtt_publish(topic, json) != 0) {
+        ESP_LOGW(TAG, "Command result publish failed for %llu",
+                 (unsigned long long)ack->command_id);
+        return -1;
+    }
+    ESP_LOGI(TAG, "Published command result %llu: %s",
+             (unsigned long long)ack->command_id, json);
+    return 0;
+}
+
+static void gateway_pipeline_transport_failure(const st_command_t *command,
+                                               st_command_reason_t reason)
+{
+    st_command_ack_t ack;
+
+    memset(&ack, 0, sizeof(ack));
+    ack.command_id = command->command_id;
+    memcpy(ack.pod_id, command->target_pod_id, sizeof(ack.pod_id));
+    ack.status = ST_COMMAND_STATUS_FAILED;
+    ack.reason = reason;
+    ack.timestamp_ms = (uint64_t)(esp_timer_get_time() / 1000);
+    (void)gateway_pipeline_publish_command_result(&ack);
+}
+
+int gateway_pipeline_process_mqtt_command(const char *topic, const char *payload)
+{
+    st_command_t command;
+    uint8_t wire_payload[ST_COMMAND_WIRE_SIZE];
+    size_t wire_length;
+
+    if (gw_command_json_parse(topic, payload, &command) != 0) {
+        ESP_LOGW(TAG, "Rejected invalid downstream command JSON");
+        return -1;
+    }
+    if (st_command_encode(&command, wire_payload, sizeof(wire_payload),
+                          &wire_length) != 0 ||
+        uart_link_send_payload(ST_GATEWAY_MESSAGE_COMMAND, wire_payload,
+                               (uint16_t)wire_length,
+                               (uint32_t)command.command_id) != 0) {
+        ESP_LOGW(TAG, "UART command transport failed for %llu",
+                 (unsigned long long)command.command_id);
+        gateway_pipeline_transport_failure(&command, ST_COMMAND_REASON_TRANSPORT_FAILED);
+        return -1;
+    }
+    ESP_LOGI(TAG, "Forwarded command %llu for %s to Zigbee gateway",
+             (unsigned long long)command.command_id, command.target_pod_id);
+    return 0;
+}
+
 int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
                                         const uint8_t *payload)
 {
@@ -45,18 +108,37 @@ int gateway_pipeline_process_uart_frame(const st_gateway_frame_header_t *header,
     char sensor_id[ST_SENSOR_ID_MAX_LEN];
     uint8_t sensor_slot;
     st_gateway_ingress_result_t result;
+    st_telemetry_record_t decoded;
 
-    if (header == NULL || payload == NULL || header->version != ST_GATEWAY_FRAME_VERSION ||
-        (header->message_type != ST_GATEWAY_MESSAGE_TELEMETRY &&
+    if (header == NULL || payload == NULL ||
+        header->version != ST_GATEWAY_FRAME_VERSION) {
+        ESP_LOGW(TAG, "Rejected invalid UART frame header");
+        return -1;
+    }
+    if (header->message_type == ST_GATEWAY_MESSAGE_COMMAND_ACK) {
+        st_command_ack_t ack;
+        if (header->payload_length != ST_COMMAND_ACK_WIRE_SIZE ||
+            st_command_ack_decode(payload, header->payload_length, &ack) != 0) {
+            ESP_LOGW(TAG, "Rejected invalid UART command result");
+            return -1;
+        }
+        return gateway_pipeline_publish_command_result(&ack);
+    }
+
+    if ((header->message_type != ST_GATEWAY_MESSAGE_TELEMETRY &&
          header->message_type != ST_GATEWAY_MESSAGE_HEALTH) ||
         header->payload_length != ST_ZIGBEE_TELEMETRY_PAYLOAD_SIZE ||
-        st_zigbee_telemetry_sensor_slot(payload, header->payload_length, &sensor_slot) != 0) {
+        st_zigbee_telemetry_decode(payload, header->payload_length,
+                                   "unresolved", "unresolved", &decoded,
+                                   &sensor_slot) != 0 ||
+        st_gateway_identity_resolve(header->source_address, sensor_slot,
+                                    decoded.reading.sensor_kind, pod_id,
+                                    sizeof(pod_id), sensor_id,
+                                    sizeof(sensor_id)) != 0) {
         ESP_LOGW(TAG, "Rejected unsupported UART frame");
         return -1;
     }
 
-    snprintf(pod_id, sizeof(pod_id), "POD_%04X", header->source_address);
-    snprintf(sensor_id, sizeof(sensor_id), "SLOT_%u", (unsigned int)sensor_slot);
     result = st_gateway_runtime_ingest_zigbee(&s_runtime, payload, header->payload_length,
                                               pod_id, sensor_id);
     if (result != ST_GATEWAY_INGRESS_ACCEPTED) {

@@ -17,6 +17,7 @@ static const char *TAG = "uart_link";
 #define UART_LINK_TXD_PIN      4
 #define UART_LINK_RXD_PIN      5
 #define UART_LINK_RX_BUF_SIZE  1024
+#define UART_LINK_TX_BUF_SIZE  512
 
 /* Frame reassembly buffer. Sized generously above the largest frame
  * currently expected (16-byte header + 30-byte Zigbee payload + 2-byte
@@ -100,6 +101,32 @@ void uart_link_feed_test_bytes(const uint8_t *data, size_t length)
     uart_link_append_bytes(data, length);
 }
 
+int uart_link_send_payload(st_gateway_message_type_t message_type,
+                           const uint8_t *payload, uint16_t payload_length,
+                           uint32_t sequence)
+{
+    st_gateway_frame_header_t header = {
+        .version = ST_GATEWAY_FRAME_VERSION,
+        .message_type = message_type,
+        .payload_length = payload_length,
+        .source_address = 0U,
+        .boot_id = 0U,
+        .sequence = sequence,
+    };
+    uint8_t frame[PARSE_BUFFER_SIZE];
+    size_t frame_length;
+
+    if (payload == NULL ||
+        st_gateway_frame_encode(&header, payload, frame, sizeof(frame),
+                                &frame_length) != 0) {
+        return -1;
+    }
+    return uart_write_bytes(UART_LINK_PORT, frame, frame_length) ==
+                   (int)frame_length
+               ? 0
+               : -1;
+}
+
 static void uart_link_rx_task(void *arg)
 {
     (void)arg;
@@ -123,7 +150,8 @@ void uart_link_init(void)
         .source_clk = UART_SCLK_DEFAULT,
     };
 
-    ESP_ERROR_CHECK(uart_driver_install(UART_LINK_PORT, UART_LINK_RX_BUF_SIZE, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(UART_LINK_PORT, UART_LINK_RX_BUF_SIZE,
+                                        UART_LINK_TX_BUF_SIZE, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_LINK_PORT, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_LINK_PORT, UART_LINK_TXD_PIN, UART_LINK_RXD_PIN,
                                   UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));

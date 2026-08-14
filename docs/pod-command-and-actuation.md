@@ -61,10 +61,11 @@ alarm-condition, acknowledgement, silence, output-test, LED, buzzer, or motor
 state machine. GPIO19 and the shared buzzer/LED branch are never configured or
 driven.
 
-The command/ack gateway-frame message types remain portable framing contracts.
-Gateway-Wi-Fi, Pi bridge, ThingsBoard RPC parsing, and live downlink/return-path
-reconciliation are intentionally unchanged, so no end-to-end configuration
-claim is made.
+I3 composes the command/ack gateway-frame message types through the Wi-Fi
+gateway, Zigbee coordinator, pod command runtime, and Pi RPC correlation layer.
+This is a transport implementation only: the pod uses volatile command state,
+target NVS persistence is not composed, and no deployed or physical end-to-end
+claim is made. See `docs/command-transport.md`.
 
 ## Verification boundary
 

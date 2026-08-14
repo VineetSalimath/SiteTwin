@@ -22,6 +22,11 @@ static EventGroupHandle_t s_wifi_event_group;
 
 static esp_mqtt_client_handle_t s_mqtt_client = NULL;
 static bool s_mqtt_connected = false;
+static char s_command_topic[96];
+static char s_command_payload[768];
+static size_t s_command_expected;
+static size_t s_command_received;
+static bool s_command_reassembly_active;
 
 /* ---------- Wi-Fi ---------- */
 
@@ -71,6 +76,59 @@ static void wifi_init_sta(void)
 
 /* ---------- MQTT ---------- */
 
+static void mqtt_command_reassembly_reset(void)
+{
+    s_command_topic[0] = '\0';
+    s_command_payload[0] = '\0';
+    s_command_expected = 0U;
+    s_command_received = 0U;
+    s_command_reassembly_active = false;
+}
+
+static void mqtt_process_command_chunk(esp_mqtt_event_handle_t event)
+{
+    size_t offset;
+    size_t chunk_length;
+
+    if (event->current_data_offset < 0 || event->data_len < 0 ||
+        event->total_data_len <= 0) {
+        mqtt_command_reassembly_reset();
+        return;
+    }
+    offset = (size_t)event->current_data_offset;
+    chunk_length = (size_t)event->data_len;
+    if (offset == 0U) {
+        size_t topic_length;
+
+        mqtt_command_reassembly_reset();
+        if (event->topic == NULL || event->topic_len <= 0 ||
+            (size_t)event->topic_len >= sizeof(s_command_topic) ||
+            (size_t)event->total_data_len >= sizeof(s_command_payload)) {
+            ESP_LOGW(TAG, "Rejected oversized command MQTT message");
+            return;
+        }
+        topic_length = (size_t)event->topic_len;
+        memcpy(s_command_topic, event->topic, topic_length);
+        s_command_topic[topic_length] = '\0';
+        s_command_expected = (size_t)event->total_data_len;
+        s_command_reassembly_active = true;
+    }
+    if (!s_command_reassembly_active || offset != s_command_received ||
+        chunk_length > s_command_expected - s_command_received) {
+        ESP_LOGW(TAG, "Rejected out-of-order command MQTT chunk");
+        mqtt_command_reassembly_reset();
+        return;
+    }
+    memcpy(s_command_payload + s_command_received, event->data, chunk_length);
+    s_command_received += chunk_length;
+    if (s_command_received == s_command_expected) {
+        s_command_payload[s_command_received] = '\0';
+        (void)gateway_pipeline_process_mqtt_command(s_command_topic,
+                                                    s_command_payload);
+        mqtt_command_reassembly_reset();
+    }
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                                 int32_t event_id, void *event_data)
 {
@@ -79,13 +137,23 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected to HiveMQ");
         s_mqtt_connected = true;
+        /* Subscribe to downstream commands for all pods. Wildcard '+' mirrors
+         * the pattern bridge.py uses for the upstream telemetry topic. */
+        esp_mqtt_client_subscribe(s_mqtt_client, "sitetwin/pods/+/commands", 1);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "MQTT disconnected");
         s_mqtt_connected = false;
+        mqtt_command_reassembly_reset();
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT publish acknowledged, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_SUBSCRIBED:
+        ESP_LOGI(TAG, "MQTT subscribe acknowledged, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_DATA:
+        mqtt_process_command_chunk(event);
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT error event");
