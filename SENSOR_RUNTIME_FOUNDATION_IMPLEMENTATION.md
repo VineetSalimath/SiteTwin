@@ -145,12 +145,18 @@ implementation. GPIO19 is one shared buzzer/LED low-side branch and remains
 unimplemented pending polarity, PWM, and load validation. Motor actuation is
 not a SiteTwin pod capability.
 
-The board-intent interface defines port count, presence detection, power, module-ID read, bus selection/enable/disable, and fault-clear operations without defining GPIOs, mux arithmetic, resistor bands, power polarity, or final port count. The physical lifecycle enum records the planned states, but no unconfirmed electrical detection logic is implemented.
+The board-port interface defines port count, presence detection, power,
+module-ID read, bus selection/enable/disable, and fault-clear operations. The
+H1/H2 final-PCB implementation now fixes the four-port GPIO/mux arithmetic and
+can return median raw ADC, millivolts, calibration status, and a provisional
+identity. It does not arm the unverified-polarity comparator inputs or commit
+dynamic registry state.
 
 Current removal is detected through failed sensor communication or explicit
 module-instance detach. It is not immediate electrical hot-swap detection.
-Mux selection, calibrated ADC-ID bands, power switching, duplicate-address
-handling, and change-interrupt behavior are not implemented by this milestone.
+Final calibrated ADC-ID bands, per-port power switching, duplicate-address
+handling, dynamic attach/detach, DATA_COMMON acquisition, and change-interrupt
+behavior are not implemented by this milestone.
 
 ## Host verification coverage
 

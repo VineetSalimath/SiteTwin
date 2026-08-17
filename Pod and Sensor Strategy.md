@@ -1,8 +1,8 @@
 ---
 title: Pod and Sensor Strategy
 project: SiteTwin
-status: Three fixed pod profiles implemented; universal hardware interface under bring-up
-updated: 2026-08-13
+status: Three fixed pod profiles implemented; H1/H2 final-board interface under bring-up
+updated: 2026-08-17
 tags:
   - sitetwin
   - hardware
@@ -16,20 +16,30 @@ Related: [[SiteTwin Project Hub]], [[SiteTwin Data Flow - Beginner Guide]], [[Ar
 
 ## Connector Standard
 
-The current universal module concept remains a 6-contact connector. The confirmed functional categories are:
+The final board has four 6-contact universal connectors, J7 through J10. Their
+confirmed functional nets are:
 
-1. VCC
+1. 3V3
 2. GND
 3. shared I2C SDA
 4. shared I2C SCL
 5. auxiliary DATA / GPIO
 6. auxiliary identification-capable line
 
-The main idea is to standardize the electrical interface, not force every raw sensor to speak the same native protocol. The exact final electrical use of the two auxiliary contacts remains subject to team confirmation because the team is evaluating analogue resistor-coded identification, multiplexing, power gating, and hot-swap behavior.
+The interface standardizes the electrical boundary without forcing every raw
+sensor to use one native protocol. U2 selects the four resistor-coded ID lines
+onto `ID_ADC`/GPIO0. U4 selects the four non-I2C DATA lines onto
+`DATA_COMMON`/GPIO3. Both are CD74HC4052M96 devices. I2C remains shared on
+GPIO10/GPIO11. The board does not provide confirmed per-port sensor-power
+switching; GPIO18 gates only the temporary precision ID pull-up.
 
 ## Identification Strategy
 
-A supervisor-proposed prototype strategy is being evaluated in which each adapter carries a resistor-coded identity. The main board would read the resulting analogue identification voltage using the ESP32-C6 ADC and classify the attached module into a validated voltage band.
+Each adapter carries a resistor-coded identity. U2 selects the port and the
+main board enables a switched 10 kOhm pull-up only while it acquires multiple
+GPIO0 ADC samples. The H2 board-port layer implements this measurement and a
+clearly provisional midpoint classifier. Final acceptance bands still require
+assembled-PCB calibration.
 
 This concept is particularly useful for modules such as PIR and reed/contact sensors that do not expose protocol-level identity. I2C devices may additionally be probed at protocol level after the port has been classified.
 
@@ -38,18 +48,28 @@ Important implementation constraints:
 - identification voltages and guard bands must be derived from bench measurements rather than assumed values
 - ADC calibration, resistor tolerance, supply variation, mux effects if used, noise, and connector resistance must be included in characterization
 - the identification divider should not remain continuously energized merely to preserve an already-known identity; reducing its standby current is a design objective
-- the exact switching device, mux arrangement, channel count, scan sequence, and immediate hot-swap detector are not yet locked
+- unknown or out-of-range values must remain `UNKNOWN_ID`
+- the fixed U2/U4 select mapping and GPIO18 LOW-enable/HIGH-disable sequence
+  must be preserved
 
 ## Hot-Swap Strategy
 
-Hot-swap remains a requirement, but the final hardware detection mechanism is still open. The firmware architecture should therefore separate two concepts:
+Hot-swap remains a requirement. The final board now fixes separate low-current
+change detection and precision identification mechanisms, so the firmware
+continues to separate two concepts:
 
 1. **Identification:** determine what module is attached to a port.
 2. **Change detection:** determine that a module has been inserted, removed, or replaced and trigger a re-identification operation.
 
-The sensor registry already supports logical probing, removal, fault, and reattachment behavior. The board layer still needs to provide the physical change-detection and identification mechanisms.
+The permanent 1 MOhm paths feed a TS884 whose four outputs reach GPIO6, GPIO7,
+GPIO22, and GPIO23. Their active polarity still needs bench confirmation. The
+H2 board layer defines those inputs without arming interrupts or inferring
+presence from an unverified polarity. Full debounced rescan and registry
+attach/detach belong to H3.
 
-Do not treat the previously proposed comparator/diode-OR wake scheme, ID-only mux, ID+DATA mux, or any fixed four/six-port pin allocation as finalized until the team confirms the circuit.
+The sensor registry already supports logical probing, removal, fault, and
+reattachment. The new board-port skeleton provides mux mapping and safe raw ID
+acquisition; it does not yet provide the dynamic module manager.
 
 ## Environment Pod
 

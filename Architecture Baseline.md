@@ -2,7 +2,7 @@
 title: Architecture Baseline
 project: SiteTwin
 status: Zigbee transport deployed; sensor bring-up next
-updated: 2026-07-31
+updated: 2026-08-17
 tags:
   - sitetwin
   - architecture
@@ -64,8 +64,10 @@ topology as follows:
   are prohibited.
 
 This topology supersedes earlier TMP36, DS18B20-as-legacy-only, and
-unfinalized-mux statements. The universal-port scanner, physical hot-swap, mux
-control, and live alarm-output implementation remain gated pending electrical
+unfinalized-mux statements. The disabled H1/H2 final-PCB profile now represents
+the pin/mux topology and supports a safe provisional ID measurement. The
+dynamic universal-port scanner/registry manager, physical wake handling,
+DATA_COMMON acquisition, and live alarm output remain gated pending electrical
 validation. Development-profile wiring, including Pod 3 DS18B20 on GPIO0, is
 not a final-board GPIO claim.
 

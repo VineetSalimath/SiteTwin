@@ -1,7 +1,9 @@
 # Final PCB Hot-Swap Truth and H0-H2 Plan
 
-Status: H0 contract freeze for `feature/final-pcb-hotswap`  
-Hardware basis: latest KiCad-derived four-port implementation note  
+Status: H0 contract freeze for `feature/final-pcb-hotswap`
+
+Hardware basis: latest KiCad-derived four-port implementation note
+
 Software base: `integration/c1-alarm-gateway-control` at
 `1c2be4b712d8e29a8225e0234611fccc509e92ec`
 

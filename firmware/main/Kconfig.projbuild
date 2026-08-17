@@ -18,6 +18,168 @@ config SITETWIN_GATEWAY_UART_BAUD_RATE
     int "Gateway-to-Wi-Fi UART baud rate"
     default 115200
 
+menu "Final four-port PCB profile"
+
+config SITETWIN_FINAL_PCB_PROFILE
+    bool "Enable final PCB board-port support"
+    default n
+    help
+        Compile-time gate for the H1/H2 four-port board layer. This does not
+        enable dynamic module attach/detach, hot-swap interrupts, or GPIO19
+        output control.
+
+config SITETWIN_FINAL_PCB_PORT_COUNT
+    int "Universal port count"
+    range 4 4
+    default 4
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ID_ADC_GPIO
+    int "ID_ADC GPIO"
+    range 0 30
+    default 0
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ID_MUX_SEL0_GPIO
+    int "U2 ID mux A/SEL0 GPIO"
+    range 0 30
+    default 1
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ID_MUX_SEL1_GPIO
+    int "U2 ID mux B/SEL1 GPIO"
+    range 0 30
+    default 2
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_DATA_COMMON_GPIO
+    int "U4 DATA_COMMON GPIO"
+    range 0 30
+    default 3
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_1_GPIO
+    int "Port 1 TS884 wake GPIO"
+    range 0 30
+    default 6
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_2_GPIO
+    int "Port 2 TS884 wake GPIO"
+    range 0 30
+    default 7
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_3_GPIO
+    int "Port 3 TS884 wake GPIO"
+    range 0 30
+    default 22
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO
+    int "Port 4 TS884 wake GPIO"
+    range 0 30
+    default 23
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+choice SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY
+    prompt "TS884 wake active polarity"
+    default SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY_UNKNOWN
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY_UNKNOWN
+    bool "Unknown (do not enable wake handling)"
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW
+    bool "Active low (requires bench verification)"
+
+config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_HIGH
+    bool "Active high (requires bench verification)"
+
+endchoice
+
+config SITETWIN_FINAL_PCB_I2C_SDA_GPIO
+    int "Shared I2C SDA GPIO"
+    range 0 30
+    default 10
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_I2C_SCL_GPIO
+    int "Shared I2C SCL GPIO"
+    range 0 30
+    default 11
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ID_MOSFET_GATE_GPIO
+    int "Switched precision ID pull-up gate GPIO"
+    range 0 30
+    default 18
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_BUZZER_GPIO
+    int "Feature-gated shared buzzer/LED GPIO"
+    range 0 30
+    default 19
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Defines the schematic net only. H1/H2 never configures or drives it.
+
+config SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED
+    bool "Shared alarm output electrically verified"
+    default n
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Keep disabled until the complete Q2/R36/load evidence establishes
+        active polarity, PWM envelope, current, and dissipation limits. H1/H2
+        do not consume this flag or enable GPIO19.
+
+config SITETWIN_FINAL_PCB_DATA_MUX_SEL0_GPIO
+    int "U4 DATA mux A/SEL0 GPIO"
+    range 0 30
+    default 21
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_DATA_MUX_SEL1_GPIO
+    int "U4 DATA mux B/SEL1 GPIO"
+    range 0 30
+    default 20
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_MUX_SETTLE_US
+    int "Mux settling delay (microseconds)"
+    range 1 100000
+    default 2000
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ID_SETTLE_US
+    int "Precision ID divider settling delay (microseconds)"
+    range 1 100000
+    default 2000
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ID_SAMPLE_COUNT
+    int "ID ADC sample count (must be odd)"
+    range 3 9
+    default 5
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_ADC_FALLBACK_FULL_SCALE_MV
+    int "Uncalibrated ADC fallback full-scale millivolts"
+    range 3000 3600
+    default 3300
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Diagnostic fallback only. Provisional ID bands are not final without
+        assembled-PCB calibrated measurements.
+
+config SITETWIN_FINAL_PCB_ADC_FALLBACK_RAW_MAX
+    int "Uncalibrated ADC fallback maximum raw code"
+    range 1023 65535
+    default 4095
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+endmenu
+
 config SITETWIN_SHT41_ENABLED
     bool "Enable the Environment Pod SHT41 runtime"
     default y
