@@ -890,7 +890,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     st_bh1750_config_t sensor_config;
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_ACTIVITY_ACCESS, "POD_2", 2U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_ACTIVITY_ACCESS, "POD_6647", 2U);
     result = st_espidf_i2c_master_bus_init(&activity_i2c_bus, &bus_config);
     if (result != ESP_OK) {
         return result;
@@ -953,7 +953,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     st_ds18b20_config_t ds18b20_config;
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_EQUIPMENT, "POD_3", 3U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_EQUIPMENT, "POD_1FBA", 3U);
     result = st_espidf_i2c_master_bus_init(&equipment_i2c_bus, &bus_config);
     if (result != ESP_OK) {
         return result;
@@ -1038,7 +1038,7 @@ static esp_err_t pod_sensor_runtime_init(void)
     };
     esp_err_t result;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "POD_1", 1U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_ENVIRONMENT, "POD_67C3", 1U);
     result = st_espidf_i2c_master_bus_init(&environment_i2c_bus, &bus_config);
     if (result != ESP_OK) {
         return result;
@@ -1485,7 +1485,7 @@ void app_main(void)
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,
                                              ST_POD_ACTIVITY_ACCESS,
-                                             ST_POD_2_ID,
+                                             "POD_6647",
                                              st_espidf_pod_command_persistence(),
                                              pod_runtime.registry.boot_id,
                                              monotonic_now_ms()) == 0
@@ -1495,7 +1495,7 @@ void app_main(void)
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,
                                              ST_POD_EQUIPMENT,
-                                             ST_POD_3_ID,
+                                             "POD_1FBA",
                                              st_espidf_pod_command_persistence(),
                                              pod_runtime.registry.boot_id,
                                              monotonic_now_ms()) == 0
@@ -1505,7 +1505,7 @@ void app_main(void)
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,
                                              ST_POD_ENVIRONMENT,
-                                             ST_POD_1_ID,
+                                             "POD_67C3",
                                              st_espidf_pod_command_persistence(),
                                              pod_runtime.registry.boot_id,
                                              monotonic_now_ms()) == 0
