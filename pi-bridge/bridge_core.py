@@ -15,7 +15,7 @@ COMMAND_TOPIC = "sitetwin/pods/{pod_id}/commands"
 COMMAND_RESULTS_TOPIC = "sitetwin/pods/+/command_results"
 CONTROL_TOPIC = "sitetwin/pods/+/control"
 GATEWAY_INCIDENT_TOPIC = "sitetwin/gateway/incidents"
-POD_ID_PATTERN = re.compile(r"^POD_[1-9][0-9]*$")
+POD_ID_PATTERN = re.compile(r"^POD_[0-9A-F]+$")
 TERMINAL_STATUSES = {"executed", "rejected", "expired", "duplicate", "failed"}
 CAPABILITIES = {
     "temperature_c",
