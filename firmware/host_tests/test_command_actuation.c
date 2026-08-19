@@ -303,13 +303,16 @@ static int test_test_output_actuation(void)
     st_command_runtime_tick(&activity_runtime, 7051U); /* buzzer's 5000ms from 2050 has now passed */
     EXPECT(activity_runtime.test_output_buzzer_active == 0U);
 
-    /* Non-verified profile (Equipment/Environment): rejected even with a
-     * correct target, since their physical LED/buzzer wiring has never
-     * been bench-tested -- do not let a correct target alone bypass the
-     * per-profile hardware verification gate. */
+    /* Non-verified profile: rejected even with a correct target, since
+     * unverified physical LED/buzzer wiring must never bypass the
+     * per-profile hardware verification gate. All three real profiles are
+     * bench-verified in production now (see st_pod_capabilities), so this
+     * forces the flag back off on one runtime instance to keep testing the
+     * gate's logic itself -- not tied to which real profile happens to be
+     * unverified today (there may be none). */
     EXPECT(st_command_runtime_init(&environment_runtime, ST_POD_ENVIRONMENT,
                                    "POD_1", (st_command_persistence_t){0}) == 0);
-    EXPECT(environment_runtime.capabilities.shared_alarm_indicator_verified == 0U);
+    environment_runtime.capabilities.shared_alarm_indicator_verified = 0U;
     command = make_command(4U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_LED);
     command.duration_ms = 1000U;
     EXPECT(st_command_runtime_handle(&environment_runtime, &command, 2000U, &ack) == 0);

@@ -298,6 +298,17 @@ static int test_command_capabilities_persistent_ack_and_unsupported_output(void)
     memset(&store, 0, sizeof(store));
     EXPECT(st_command_runtime_init_with_boot(&runtime, ST_POD_ENVIRONMENT,
                                              "POD_1", persistence, 1U, 0U) == 0);
+    /* Environment is bench-verified in production now (see
+     * st_pod_capabilities), so force this one runtime instance back to
+     * unverified to keep testing the SILENCE_ALARM/TEST_OUTPUT rejection
+     * path itself -- this test is about that gate's logic, not about which
+     * real profiles happen to be verified today.
+     * Two copies to override: capabilities.* (what TEST_OUTPUT's dispatch
+     * reads) and alarm.* (what st_alarm_runtime_silence() reads) -- they're
+     * independent snapshots taken from the same st_pod_capabilities() call
+     * at init time, not a shared/live value. */
+    runtime.capabilities.shared_alarm_indicator_verified = 0U;
+    runtime.alarm.shared_alarm_indicator_verified = 0U;
     drain_command_events(&runtime);
     reading = co2_reading(1200.0F, 1U, 10U);
     EXPECT(st_command_runtime_ingest_reading(&runtime, &reading, 10U) == 1);

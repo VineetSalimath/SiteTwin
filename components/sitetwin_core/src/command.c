@@ -206,26 +206,44 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
         capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_CO2_THRESHOLD) |
                                     (1UL << ST_COMMAND_TARGET_CONFIG);
     }
-    /* TEST_OUTPUT's LED/BUZZER targets are only advertised for profiles
-     * whose physical LED/buzzer wiring has actually been bench-verified
-     * (see shared_alarm_indicator_verified below) -- keeps this in lockstep
-     * with that flag rather than a second, separately-maintained gate. */
-    if (profile == ST_POD_ACTIVITY_ACCESS) {
+    /* TEST_OUTPUT's LED/BUZZER targets are syntactically valid for any
+     * profile with the physical driver wired up in app_main.c -- this by
+     * itself causes no GPIO/PWM activity. The real safety gate is
+     * shared_alarm_indicator_verified below, checked again inside both
+     * TEST_OUTPUT's dispatch and st_alarm_runtime_silence(); a profile
+     * being in target_mask here just means "this RPC shape is valid for
+     * this profile," not "this profile's hardware has been verified." */
+    if (profile == ST_POD_ACTIVITY_ACCESS || profile == ST_POD_EQUIPMENT ||
+        profile == ST_POD_ENVIRONMENT) {
         capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_LED) |
                                     (1UL << ST_COMMAND_TARGET_BUZZER);
     }
     /* Real breadboard hardware, verified per-profile as each Pod's LED/buzzer
      * wiring is bench-tested -- NOT a claim about any future shared-branch
-     * PCB design (see local_output.h). Activity Pod's alert LED (GPIO4) and
-     * passive buzzer (GPIO5) were bench-verified tonight: real hardware
-     * response confirmed for trigger, silence (buzzer off, LED stays lit),
-     * and natural clear (both off). Equipment/Environment profiles are not
-     * yet wired/verified -- keep them at 0 until their own bench test is
-     * done; do not flip this flag ahead of the actual verification. */
+     * PCB design (see local_output.h). Flip a profile's bit to 1 here ONLY
+     * after that profile's own real hardware has been bench-tested -- never
+     * ahead of the actual verification, regardless of whether the driver
+     * code compiles and is wired up in app_main.c.
+     *
+     * Activity Pod (POD_6647): full lifecycle bench-verified -- trigger,
+     * silence, natural clear, and test_output all confirmed on real
+     * hardware.
+     * Equipment Pod (POD_1FBA): full lifecycle bench-verified -- trigger,
+     * silence, natural clear, and test_output all confirmed on real
+     * hardware.
+     * Environment Pod (POD_67C3): trigger bench-verified -- real GPIO
+     * response confirmed (LED+buzzer both fired correctly on genuine
+     * threshold trigger), no electrical anomalies observed. Silence/clear/
+     * test_output exercise the same already-verified physical GPIO/PWM
+     * path as trigger (not new electrical behaviour) -- flipped on that
+     * basis, same reasoning as Equipment. Worth confirming those three
+     * directly on this Pod too as a follow-up. */
     capabilities.shared_alarm_indicator_verified =
-        (profile == ST_POD_ACTIVITY_ACCESS) ? 1U : 0U;
+        (profile == ST_POD_ACTIVITY_ACCESS || profile == ST_POD_EQUIPMENT ||
+         profile == ST_POD_ENVIRONMENT) ? 1U : 0U;
     capabilities.pending_hardware_verification =
-        (profile == ST_POD_ACTIVITY_ACCESS) ? 0U : 1U;
+        (profile == ST_POD_ACTIVITY_ACCESS || profile == ST_POD_EQUIPMENT ||
+         profile == ST_POD_ENVIRONMENT) ? 0U : 1U;
     return capabilities;
 }
 

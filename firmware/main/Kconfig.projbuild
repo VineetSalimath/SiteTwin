@@ -138,6 +138,29 @@ config SITETWIN_SGP40_COMPENSATION_MAXIMUM_AGE_MS
     default 2000
     depends on SITETWIN_SGP40_ENABLED
 
+config SITETWIN_ENVIRONMENT_ALERT_LED_GPIO
+    int "Environment Pod alert LED GPIO"
+    range 0 30
+    default 4
+    help
+        Real breadboard hardware: independently controllable GPIO, plain
+        on/off. Not the same design as any single shared low-side branch
+        described elsewhere for a future PCB revision -- see
+        local_output.h.
+
+config SITETWIN_ENVIRONMENT_ALERT_BUZZER_GPIO
+    int "Environment Pod alert passive buzzer PWM GPIO"
+    range 0 30
+    default 5
+
+config SITETWIN_ENVIRONMENT_ALERT_BUZZER_HZ
+    int "Environment Pod alert buzzer PWM frequency (Hz)"
+    range 100 10000
+    default 2000
+    help
+        Starting point only, not yet tuned against the real buzzer's
+        audible/comfortable range.
+
 menu "Activity/Access Pod prototype wiring"
 
 config SITETWIN_ACTIVITY_I2C_CONTROLLER
@@ -335,6 +358,29 @@ config SITETWIN_DS18B20_SAMPLE_INTERVAL_MS
     int "DS18B20 physical sampling interval"
     range 1000 3600000
     default 1000
+
+config SITETWIN_EQUIPMENT_ALERT_LED_GPIO
+    int "Equipment Pod alert LED GPIO"
+    range 0 30
+    default 4
+    help
+        Real breadboard hardware: independently controllable GPIO, plain
+        on/off. Not the same design as any single shared low-side branch
+        described elsewhere for a future PCB revision -- see
+        local_output.h.
+
+config SITETWIN_EQUIPMENT_ALERT_BUZZER_GPIO
+    int "Equipment Pod alert passive buzzer PWM GPIO"
+    range 0 30
+    default 5
+
+config SITETWIN_EQUIPMENT_ALERT_BUZZER_HZ
+    int "Equipment Pod alert buzzer PWM frequency (Hz)"
+    range 100 10000
+    default 2000
+    help
+        Starting point only, not yet tuned against the real buzzer's
+        audible/comfortable range.
 
 endmenu
 

@@ -75,14 +75,13 @@ static st_pod_runtime_t pod_runtime;
 static st_command_runtime_t pod_command_runtime;
 static QueueHandle_t pod_command_queue;
 static QueueHandle_t pod_command_ack_queue;
-#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
-/* Alert LED/buzzer driver -- Activity Pod only for now. Same pattern
- * (Kconfig pins + this driver + the wiring in pod_command_task's loop
- * below) can be repeated for the Equipment/Environment profile branches
- * once wired up on those boards too. */
+/* Alert LED/buzzer driver -- shared code path for whichever single Pod
+ * profile this binary is built for (the three profiles are mutually
+ * exclusive at compile time, so one set of globals covers all of them;
+ * only the Kconfig pin numbers picked at init time differ per profile,
+ * see app_main()). */
 static st_espidf_local_output_t pod_local_output;
 static uint8_t pod_local_output_ready;
-#endif
 typedef struct {
     st_command_t command;
     uint64_t received_at_ms;
@@ -1336,6 +1335,15 @@ static void pod_command_task(void *context)
             local_command.issued_at_ms = queued.received_at_ms;
             local_command.expires_at_ms = queued.received_at_ms +
                                           local_command.valid_for_ms;
+            ESP_LOGI(TAG, "DEBUG command dump: id=%llu type=%d target=%d source=%d "
+                     "issued=%llu expires=%llu valid_for=%lu duration_ms=%lu",
+                     (unsigned long long)local_command.command_id,
+                     (int)local_command.command_type, (int)local_command.target,
+                     (int)local_command.source,
+                     (unsigned long long)local_command.issued_at_ms,
+                     (unsigned long long)local_command.expires_at_ms,
+                     (unsigned long)local_command.valid_for_ms,
+                     (unsigned long)local_command.duration_ms);
             if (st_command_runtime_handle(&pod_command_runtime, &local_command,
                                           now_ms, &ack) == 0) {
                 if (ack.status == ST_COMMAND_STATUS_EXECUTED &&
@@ -1351,7 +1359,6 @@ static void pod_command_task(void *context)
             }
         }
         st_command_runtime_tick(&pod_command_runtime, now_ms);
-#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
         if (pod_local_output_ready) {
             /* Desired state, recomputed every cycle -- the driver's own
              * submit() only actually touches the GPIO/PWM when the value
@@ -1391,7 +1398,6 @@ static void pod_command_task(void *context)
             (void)output_service.submit(output_service.context, &led_request);
             (void)output_service.submit(output_service.context, &buzzer_request);
         }
-#endif
         if (pod_joined) {
             while (has_pending_event ||
                    st_command_runtime_next_control_event(&pod_command_runtime,
@@ -1559,6 +1565,14 @@ void app_main(void)
                                              monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
+    pod_local_output_ready = st_espidf_local_output_init(
+                                  &pod_local_output,
+                                  CONFIG_SITETWIN_EQUIPMENT_ALERT_LED_GPIO,
+                                  CONFIG_SITETWIN_EQUIPMENT_ALERT_BUZZER_GPIO,
+                                  CONFIG_SITETWIN_EQUIPMENT_ALERT_BUZZER_HZ) == ESP_OK;
+    if (!pod_local_output_ready) {
+        ESP_LOGW(TAG, "Alert LED/buzzer driver init failed -- indicator will stay silent");
+    }
 #else
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,
@@ -1569,6 +1583,14 @@ void app_main(void)
                                              monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
+    pod_local_output_ready = st_espidf_local_output_init(
+                                  &pod_local_output,
+                                  CONFIG_SITETWIN_ENVIRONMENT_ALERT_LED_GPIO,
+                                  CONFIG_SITETWIN_ENVIRONMENT_ALERT_BUZZER_GPIO,
+                                  CONFIG_SITETWIN_ENVIRONMENT_ALERT_BUZZER_HZ) == ESP_OK;
+    if (!pod_local_output_ready) {
+        ESP_LOGW(TAG, "Alert LED/buzzer driver init failed -- indicator will stay silent");
+    }
 #endif
     st_pod_runtime_set_reading_observer(&pod_runtime,
                                         pod_alarm_reading_observer,
