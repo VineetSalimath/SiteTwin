@@ -216,6 +216,29 @@ config SITETWIN_ACTIVITY_REED_DEBOUNCE_MS
     range 1 1000
     default 30
 
+config SITETWIN_ACTIVITY_ALERT_LED_GPIO
+    int "Activity Pod alert LED GPIO"
+    range 0 30
+    default 4
+    help
+        Real breadboard hardware: independently controllable GPIO, plain
+        on/off. Not the same design as any single shared low-side branch
+        described elsewhere for a future PCB revision -- see
+        local_output.h.
+
+config SITETWIN_ACTIVITY_ALERT_BUZZER_GPIO
+    int "Activity Pod alert passive buzzer PWM GPIO"
+    range 0 30
+    default 5
+
+config SITETWIN_ACTIVITY_ALERT_BUZZER_HZ
+    int "Activity Pod alert buzzer PWM frequency (Hz)"
+    range 100 10000
+    default 2000
+    help
+        Starting point only, not yet tuned against the real buzzer's
+        audible/comfortable range.
+
 endmenu
 
 menu "Equipment Pod prototype wiring"

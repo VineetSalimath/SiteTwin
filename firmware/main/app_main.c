@@ -21,6 +21,7 @@
 #include "sitetwin/control_event.h"
 #include "sitetwin/contracts.h"
 #include "sitetwin/ds18b20.h"
+#include "sitetwin/espidf_actuation.h"
 #include "sitetwin/espidf_i2c_bus.h"
 #include "sitetwin/espidf_onewire_bus.h"
 #include "sitetwin/gateway_frame.h"
@@ -74,6 +75,14 @@ static st_pod_runtime_t pod_runtime;
 static st_command_runtime_t pod_command_runtime;
 static QueueHandle_t pod_command_queue;
 static QueueHandle_t pod_command_ack_queue;
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+/* Alert LED/buzzer driver -- Activity Pod only for now. Same pattern
+ * (Kconfig pins + this driver + the wiring in pod_command_task's loop
+ * below) can be repeated for the Equipment/Environment profile branches
+ * once wired up on those boards too. */
+static st_espidf_local_output_t pod_local_output;
+static uint8_t pod_local_output_ready;
+#endif
 typedef struct {
     st_command_t command;
     uint64_t received_at_ms;
@@ -1342,6 +1351,47 @@ static void pod_command_task(void *context)
             }
         }
         st_command_runtime_tick(&pod_command_runtime, now_ms);
+#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+        if (pod_local_output_ready) {
+            /* Desired state, recomputed every cycle -- the driver's own
+             * submit() only actually touches the GPIO/PWM when the value
+             * changes, so no edge-detection needed here.
+             * LED: on for any active condition, regardless of silence --
+             *   stays lit as a visual reminder even after the buzzer is
+             *   silenced, since silence must never make the condition
+             *   look resolved.
+             * Buzzer: on for any active condition AND not currently
+             *   silenced. */
+            uint8_t any_active =
+                st_command_runtime_any_alarm_active(&pod_command_runtime) != 0;
+            uint8_t silenced = pod_command_runtime.alarm.silence_active != 0U;
+            /* test_output is a separate, independent trigger source (see
+             * command.h) -- ORed in here, not merged into the alarm state
+             * machine itself. A TB-triggered (or future ML-triggered) test
+             * pulse works on a Pod with zero real alarm conditions, and
+             * conversely a real alarm still lights/sounds normally even if
+             * nobody has ever sent a test_output command. */
+            uint8_t led_on = any_active || pod_command_runtime.test_output_led_active != 0U;
+            uint8_t buzzer_on = (any_active && !silenced) ||
+                                pod_command_runtime.test_output_buzzer_active != 0U;
+            st_local_output_service_t output_service =
+                st_espidf_local_output_service(&pod_local_output);
+            st_local_output_request_t led_request = {
+                .kind = ST_LOCAL_OUTPUT_LED,
+                .active = led_on,
+                .frequency_hz = 0U,
+                .duration_ms = 0U,
+            };
+            st_local_output_request_t buzzer_request = {
+                .kind = ST_LOCAL_OUTPUT_BUZZER,
+                .active = buzzer_on,
+                .frequency_hz = 0U,
+                .duration_ms = 0U,
+            };
+            (void)output_service.submit(output_service.context, &led_request);
+            (void)output_service.submit(output_service.context, &buzzer_request);
+        }
+#endif
         if (pod_joined) {
             while (has_pending_event ||
                    st_command_runtime_next_control_event(&pod_command_runtime,
@@ -1491,6 +1541,14 @@ void app_main(void)
                                              monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
+    pod_local_output_ready = st_espidf_local_output_init(
+                                  &pod_local_output,
+                                  CONFIG_SITETWIN_ACTIVITY_ALERT_LED_GPIO,
+                                  CONFIG_SITETWIN_ACTIVITY_ALERT_BUZZER_GPIO,
+                                  CONFIG_SITETWIN_ACTIVITY_ALERT_BUZZER_HZ) == ESP_OK;
+    if (!pod_local_output_ready) {
+        ESP_LOGW(TAG, "Alert LED/buzzer driver init failed -- indicator will stay silent");
+    }
 #elif SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,

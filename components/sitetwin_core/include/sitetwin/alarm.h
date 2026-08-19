@@ -45,7 +45,6 @@ typedef struct {
     uint32_t capability_mask;
     uint32_t boot_id;
     uint32_t event_sequence;
-    uint64_t silence_until_ms;
     uint64_t silenced_instance_id;
     uint64_t candidate_since_ms[ST_ALARM_CONDITION_CAPACITY];
     uint8_t candidate_active[ST_ALARM_CONDITION_CAPACITY];
@@ -77,13 +76,22 @@ int st_alarm_runtime_ingest(st_alarm_runtime_t *runtime,
                             uint64_t now_ms);
 int st_alarm_runtime_acknowledge(st_alarm_runtime_t *runtime,
                                  uint64_t instance_id, uint64_t now_ms);
+/* No duration_ms -- silence now lasts until the condition genuinely clears
+ * (or is re-silenced/re-triggered), not a timed auto-expiry. The physical
+ * LED and the TB dashboard both keep showing the unresolved condition
+ * throughout, so there is no "forgotten silent alarm" risk that a timeout
+ * would have been guarding against. */
 int st_alarm_runtime_silence(st_alarm_runtime_t *runtime,
-                             uint64_t instance_id, uint32_t duration_ms,
-                             uint64_t now_ms);
+                             uint64_t instance_id, uint64_t now_ms);
 void st_alarm_runtime_tick(st_alarm_runtime_t *runtime, uint64_t now_ms);
 int st_alarm_runtime_next_event(st_alarm_runtime_t *runtime,
                                 st_control_event_t *event);
 int st_alarm_runtime_condition_active(const st_alarm_runtime_t *runtime,
                                       uint64_t instance_id);
+/* True if ANY condition is currently active, regardless of instance_id --
+ * used to drive the shared physical LED indicator, which represents "is
+ * there an unresolved condition on this pod" rather than any one specific
+ * instance. */
+int st_alarm_runtime_any_active(const st_alarm_runtime_t *runtime);
 
 #endif

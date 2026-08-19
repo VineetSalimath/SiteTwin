@@ -1,7 +1,8 @@
 idf_component_register(SRCS "app_main.c" "control_persistence.c"
                        INCLUDE_DIRS "."
                        REQUIRES driver esp_timer nvs_flash sitetwin_core
-                                sitetwin_sensor_runtime sitetwin_sensors sitetwin_espidf_hal)
+                                sitetwin_sensor_runtime sitetwin_sensors sitetwin_espidf_hal
+                                sitetwin_espidf_actuation)
 
 if(SITETWIN_DEVICE_ROLE STREQUAL "gateway")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE

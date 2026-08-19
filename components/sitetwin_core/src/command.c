@@ -189,7 +189,9 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
     capabilities.command_mask = (1UL << ST_COMMAND_SET_RULE) |
                                 (1UL << ST_COMMAND_GET_RULE) |
                                 (1UL << ST_COMMAND_GET_CAPABILITIES) |
-                                (1UL << ST_COMMAND_ACK_ALARM);
+                                (1UL << ST_COMMAND_ACK_ALARM) |
+                                (1UL << ST_COMMAND_SILENCE_ALARM) |
+                                (1UL << ST_COMMAND_TEST_OUTPUT);
     capabilities.target_mask = 1UL << ST_COMMAND_TARGET_CAPABILITY_RULE;
     capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_CAPABILITIES) |
                                 (1UL << ST_COMMAND_TARGET_ALARM);
@@ -204,10 +206,26 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
         capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_CO2_THRESHOLD) |
                                     (1UL << ST_COMMAND_TARGET_CONFIG);
     }
-    /* The final-board shared indicator remains electrically unverified.  C1
-     * therefore advertises no output capability and never enables GPIO19. */
-    capabilities.shared_alarm_indicator_verified = 0U;
-    capabilities.pending_hardware_verification = 1U;
+    /* TEST_OUTPUT's LED/BUZZER targets are only advertised for profiles
+     * whose physical LED/buzzer wiring has actually been bench-verified
+     * (see shared_alarm_indicator_verified below) -- keeps this in lockstep
+     * with that flag rather than a second, separately-maintained gate. */
+    if (profile == ST_POD_ACTIVITY_ACCESS) {
+        capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_LED) |
+                                    (1UL << ST_COMMAND_TARGET_BUZZER);
+    }
+    /* Real breadboard hardware, verified per-profile as each Pod's LED/buzzer
+     * wiring is bench-tested -- NOT a claim about any future shared-branch
+     * PCB design (see local_output.h). Activity Pod's alert LED (GPIO4) and
+     * passive buzzer (GPIO5) were bench-verified tonight: real hardware
+     * response confirmed for trigger, silence (buzzer off, LED stays lit),
+     * and natural clear (both off). Equipment/Environment profiles are not
+     * yet wired/verified -- keep them at 0 until their own bench test is
+     * done; do not flip this flag ahead of the actual verification. */
+    capabilities.shared_alarm_indicator_verified =
+        (profile == ST_POD_ACTIVITY_ACCESS) ? 1U : 0U;
+    capabilities.pending_hardware_verification =
+        (profile == ST_POD_ACTIVITY_ACCESS) ? 0U : 1U;
     return capabilities;
 }
 
@@ -496,7 +514,6 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
     st_config_result_t config_result;
     size_t alarm_event_count;
     uint8_t silence_active;
-    uint64_t silence_until_ms;
     uint64_t silenced_instance_id;
 
     if (runtime == NULL || command == NULL || ack == NULL) {
@@ -515,7 +532,6 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
     before = runtime->persistent;
     alarm_event_count = runtime->alarm.event_count;
     silence_active = runtime->alarm.silence_active;
-    silence_until_ms = runtime->alarm.silence_until_ms;
     silenced_instance_id = runtime->alarm.silenced_instance_id;
     reason = validate_common(runtime, command, now_ms, &status);
     if (reason == ST_COMMAND_REASON_NONE &&
@@ -570,13 +586,32 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
     } else if (reason == ST_COMMAND_REASON_NONE &&
                command->command_type == ST_COMMAND_SILENCE_ALARM) {
         if (st_alarm_runtime_silence(&runtime->alarm,
-                                     command->alarm_instance_id,
-                                     command->duration_ms, now_ms) != 0) {
+                                     command->alarm_instance_id, now_ms) != 0) {
             reason = ST_COMMAND_REASON_UNSUPPORTED;
         }
     } else if (reason == ST_COMMAND_REASON_NONE &&
                command->command_type == ST_COMMAND_TEST_OUTPUT) {
-        reason = ST_COMMAND_REASON_UNSUPPORTED;
+        /* Independent of alarm.* entirely -- does not read, set, or clear
+         * any condition/instance_id. A timed pulse on whichever single
+         * output the command targets; auto-expires via
+         * st_command_runtime_tick(), not tied to any alarm lifecycle.
+         * shared_alarm_indicator_verified gates this the same way it gates
+         * silence_alarm -- both require the real GPIO wiring to have been
+         * bench-verified for this profile. */
+        if (runtime->capabilities.shared_alarm_indicator_verified == 0U ||
+            command->duration_ms == 0U || command->duration_ms > 60000U ||
+            (command->target != ST_COMMAND_TARGET_LED &&
+             command->target != ST_COMMAND_TARGET_BUZZER)) {
+            reason = ST_COMMAND_REASON_UNSUPPORTED;
+        } else {
+            if (command->target == ST_COMMAND_TARGET_LED) {
+                runtime->test_output_led_active = 1U;
+                runtime->test_output_led_expires_at_ms = now_ms + command->duration_ms;
+            } else {
+                runtime->test_output_buzzer_active = 1U;
+                runtime->test_output_buzzer_expires_at_ms = now_ms + command->duration_ms;
+            }
+        }
     }
     if (reason == ST_COMMAND_REASON_NONE) {
         sync_legacy_co2_mirror(&runtime->persistent);
@@ -599,7 +634,6 @@ int st_command_runtime_handle(st_command_runtime_t *runtime, const st_command_t 
         runtime->persistent = before;
         runtime->alarm.event_count = alarm_event_count;
         runtime->alarm.silence_active = silence_active;
-        runtime->alarm.silence_until_ms = silence_until_ms;
         runtime->alarm.silenced_instance_id = silenced_instance_id;
         set_ack(runtime, command, now_ms, ST_COMMAND_STATUS_FAILED,
                 ST_COMMAND_REASON_PERSISTENCE_FAILED, ack);
@@ -640,8 +674,17 @@ int st_command_runtime_ingest_reading(st_command_runtime_t *runtime,
 
 void st_command_runtime_tick(st_command_runtime_t *runtime, uint64_t now_ms)
 {
-    if (runtime != NULL) {
-        st_alarm_runtime_tick(&runtime->alarm, now_ms);
+    if (runtime == NULL) {
+        return;
+    }
+    st_alarm_runtime_tick(&runtime->alarm, now_ms);
+    if (runtime->test_output_led_active != 0U &&
+        now_ms >= runtime->test_output_led_expires_at_ms) {
+        runtime->test_output_led_active = 0U;
+    }
+    if (runtime->test_output_buzzer_active != 0U &&
+        now_ms >= runtime->test_output_buzzer_expires_at_ms) {
+        runtime->test_output_buzzer_active = 0U;
     }
 }
 
@@ -650,6 +693,11 @@ int st_command_runtime_next_control_event(st_command_runtime_t *runtime,
 {
     return runtime == NULL ? -1
                            : st_alarm_runtime_next_event(&runtime->alarm, event);
+}
+
+int st_command_runtime_any_alarm_active(const st_command_runtime_t *runtime)
+{
+    return runtime == NULL ? 0 : st_alarm_runtime_any_active(&runtime->alarm);
 }
 
 const char *st_command_type_name(st_command_type_t type)

@@ -391,6 +391,35 @@ static int apply_transition(st_alarm_runtime_t *runtime,
                           : ST_CONTROL_REASON_RULE_CLEARED,
                    now_ms);
     if (!active) {
+        /* Silence is scoped to the specific episode (instance_id) it was
+         * requested for -- once that condition genuinely clears, reset it
+         * so the buzzer isn't left permanently muted for the NEXT time this
+         * same rule re-triggers with a new instance_id. There is no
+         * separate timer/tick path for this; silence only ever ends here
+         * (a real clear) or is overwritten by a fresh silence_alarm call.
+         *
+         * Must emit an ALARM_SILENCE event here too, not just flip the
+         * local flag -- bridge_core.py's alarm_silenced telemetry key is
+         * event-driven (only written on receipt of an alarm_silence
+         * event), so without this the TB-side "Silenced" field would stay
+         * stuck at true forever after the first real silence+clear cycle,
+         * even though the Pod's own state (and the buzzer) had already
+         * correctly recovered. */
+        if (runtime->silence_active != 0U &&
+            runtime->silenced_instance_id == cleared_instance) {
+            st_control_event_t silence_event =
+                base_event(runtime, ST_CONTROL_EVENT_ALARM_SILENCE,
+                          ST_CONTROL_TRANSITION_CLEARED,
+                          ST_CONTROL_REASON_RULE_CLEARED, now_ms);
+            silence_event.instance_id = cleared_instance;
+            silence_event.active = 0U;
+            silence_event.silenced = 0U;
+            copy_id(silence_event.sensor_id, sizeof(silence_event.sensor_id),
+                   "alarm_silence");
+            queue_event(runtime, &silence_event);
+            runtime->silence_active = 0U;
+            runtime->silenced_instance_id = 0U;
+        }
         condition->instance_id = 0U;
     }
     return 1;
@@ -493,19 +522,16 @@ int st_alarm_runtime_acknowledge(st_alarm_runtime_t *runtime,
 }
 
 int st_alarm_runtime_silence(st_alarm_runtime_t *runtime,
-                             uint64_t instance_id, uint32_t duration_ms,
-                             uint64_t now_ms)
+                             uint64_t instance_id, uint64_t now_ms)
 {
     st_control_event_t event;
 
     if (runtime == NULL || runtime->shared_alarm_indicator_verified == 0U ||
-        duration_ms == 0U || duration_ms > 60000U ||
         !st_alarm_runtime_condition_active(runtime, instance_id)) {
         return -1;
     }
     runtime->silence_active = 1U;
     runtime->silenced_instance_id = instance_id;
-    runtime->silence_until_ms = now_ms + duration_ms;
     event = base_event(runtime, ST_CONTROL_EVENT_ALARM_SILENCE,
                        ST_CONTROL_TRANSITION_SILENCE_ACTIVE,
                        ST_CONTROL_REASON_COMMAND, now_ms);
@@ -519,22 +545,13 @@ int st_alarm_runtime_silence(st_alarm_runtime_t *runtime,
 
 void st_alarm_runtime_tick(st_alarm_runtime_t *runtime, uint64_t now_ms)
 {
-    st_control_event_t event;
-    if (runtime == NULL || runtime->silence_active == 0U ||
-        now_ms < runtime->silence_until_ms) {
-        return;
-    }
-    event = base_event(runtime, ST_CONTROL_EVENT_ALARM_SILENCE,
-                       ST_CONTROL_TRANSITION_SILENCE_EXPIRED,
-                       ST_CONTROL_REASON_EXPIRED, now_ms);
-    event.instance_id = runtime->silenced_instance_id;
-    event.active = 0U;
-    event.silenced = 0U;
-    copy_id(event.sensor_id, sizeof(event.sensor_id), "alarm_silence");
-    runtime->silence_active = 0U;
-    runtime->silence_until_ms = 0U;
-    runtime->silenced_instance_id = 0U;
-    queue_event(runtime, &event);
+    /* Silence no longer auto-expires on a timer (see st_alarm_runtime_silence);
+     * it now only clears when the condition itself clears (handled in
+     * st_alarm_runtime_ingest) or a new silence/re-trigger overwrites it.
+     * This function is kept as a stable hook point in case future ticking
+     * logic (e.g. hardware debounce) needs one -- currently a no-op. */
+    (void)runtime;
+    (void)now_ms;
 }
 
 int st_alarm_runtime_next_event(st_alarm_runtime_t *runtime,
@@ -564,6 +581,22 @@ int st_alarm_runtime_condition_active(const st_alarm_runtime_t *runtime,
             &runtime->persistent->conditions[index];
         if (condition->used != 0U && condition->active != 0U &&
             condition->instance_id == instance_id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int st_alarm_runtime_any_active(const st_alarm_runtime_t *runtime)
+{
+    size_t index;
+    if (runtime == NULL) {
+        return 0;
+    }
+    for (index = 0U; index < ST_ALARM_CONDITION_CAPACITY; ++index) {
+        const st_alarm_condition_state_t *condition =
+            &runtime->persistent->conditions[index];
+        if (condition->used != 0U && condition->active != 0U) {
             return 1;
         }
     }

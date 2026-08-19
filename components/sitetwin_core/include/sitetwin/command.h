@@ -155,6 +155,18 @@ typedef struct {
     st_command_persistence_t persistence;
     st_command_persistent_state_t persistent;
     st_alarm_runtime_t alarm;
+    /* test_output state -- independent of alarm.*, never derived from any
+     * real sensor reading or condition. A timed pulse: set by handling a
+     * TEST_OUTPUT command, auto-cleared once its own expiry passes
+     * (checked in st_command_runtime_tick). LED and buzzer each get their
+     * own expiry so testing one doesn't extend/cut short a still-running
+     * test of the other. The physical LED/buzzer driven state is (alarm
+     * state) OR (this state) -- computed by the caller (see app_main.c),
+     * not here. */
+    uint8_t test_output_led_active;
+    uint8_t test_output_buzzer_active;
+    uint64_t test_output_led_expires_at_ms;
+    uint64_t test_output_buzzer_expires_at_ms;
 } st_command_runtime_t;
 
 int st_command_encode(const st_command_t *command, uint8_t *payload,
@@ -191,5 +203,12 @@ const char *st_command_type_name(st_command_type_t type);
 const char *st_command_target_name(st_command_target_t target);
 const char *st_command_status_name(st_command_status_t status);
 const char *st_command_reason_name(st_command_reason_t reason);
+/* Thin wrapper over st_alarm_runtime_any_active(&runtime->alarm) -- lets
+ * callers (app_main.c) that only hold st_command_runtime_t decide the
+ * desired physical LED/buzzer state without reaching into the embedded
+ * alarm struct directly. runtime->alarm.silence_active is a plain struct
+ * member and can be read directly for the buzzer's silence check; no
+ * wrapper needed for that one. */
+int st_command_runtime_any_alarm_active(const st_command_runtime_t *runtime);
 
 #endif

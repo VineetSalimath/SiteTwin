@@ -250,6 +250,75 @@ static int test_v2_persistence_migration(void)
     return 0;
 }
 
+static int test_test_output_actuation(void)
+{
+    st_command_runtime_t activity_runtime;
+    st_command_runtime_t environment_runtime;
+    st_command_ack_t ack;
+    st_command_t command;
+
+    /* Activity profile: shared_alarm_indicator_verified=1 (bench-verified
+     * tonight), so LED/BUZZER targets should actually be advertised and
+     * accepted. */
+    EXPECT(st_command_runtime_init(&activity_runtime, ST_POD_ACTIVITY_ACCESS,
+                                   "POD_1", (st_command_persistence_t){0}) == 0);
+    EXPECT(activity_runtime.capabilities.shared_alarm_indicator_verified == 1U);
+    EXPECT(activity_runtime.test_output_led_active == 0U);
+    EXPECT(activity_runtime.test_output_buzzer_active == 0U);
+
+    /* Wrong target (not LED/BUZZER) is rejected even on a verified profile. */
+    command = make_command(1U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_ALARM);
+    command.duration_ms = 1000U;
+    EXPECT(st_command_runtime_handle(&activity_runtime, &command, 2000U, &ack) == 0);
+    EXPECT(ack.status == ST_COMMAND_STATUS_REJECTED);
+    EXPECT(ack.reason == ST_COMMAND_REASON_UNSUPPORTED);
+
+    /* Correct target on a verified profile: executes, sets the flag, does
+     * NOT touch alarm.* at all (fully independent trigger source). */
+    command = make_command(2U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_LED);
+    command.duration_ms = 100U;
+    EXPECT(st_command_runtime_handle(&activity_runtime, &command, 2000U, &ack) == 0);
+    EXPECT(ack.status == ST_COMMAND_STATUS_EXECUTED);
+    EXPECT(activity_runtime.test_output_led_active == 1U);
+    EXPECT(activity_runtime.test_output_buzzer_active == 0U);
+    EXPECT(activity_runtime.alarm.silence_active == 0U);
+    EXPECT(st_alarm_runtime_any_active(&activity_runtime.alarm) == 0);
+
+    /* Independent expiries: start a longer BUZZER pulse partway through the
+     * LED pulse's lifetime. Ticking past the LED's (earlier) expiry must
+     * clear ONLY the LED, leaving the still-running BUZZER pulse alone --
+     * this is the shared-vs-separate-timestamp behaviour caught and fixed
+     * while implementing this feature. */
+    command = make_command(3U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_BUZZER);
+    command.duration_ms = 5000U;
+    EXPECT(st_command_runtime_handle(&activity_runtime, &command, 2050U, &ack) == 0);
+    EXPECT(ack.status == ST_COMMAND_STATUS_EXECUTED);
+    EXPECT(activity_runtime.test_output_led_active == 1U);
+    EXPECT(activity_runtime.test_output_buzzer_active == 1U);
+
+    st_command_runtime_tick(&activity_runtime, 2101U); /* LED's 100ms from 2000 has passed */
+    EXPECT(activity_runtime.test_output_led_active == 0U);
+    EXPECT(activity_runtime.test_output_buzzer_active == 1U); /* buzzer's 5000ms from 2050 has not */
+
+    st_command_runtime_tick(&activity_runtime, 7051U); /* buzzer's 5000ms from 2050 has now passed */
+    EXPECT(activity_runtime.test_output_buzzer_active == 0U);
+
+    /* Non-verified profile (Equipment/Environment): rejected even with a
+     * correct target, since their physical LED/buzzer wiring has never
+     * been bench-tested -- do not let a correct target alone bypass the
+     * per-profile hardware verification gate. */
+    EXPECT(st_command_runtime_init(&environment_runtime, ST_POD_ENVIRONMENT,
+                                   "POD_1", (st_command_persistence_t){0}) == 0);
+    EXPECT(environment_runtime.capabilities.shared_alarm_indicator_verified == 0U);
+    command = make_command(4U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_LED);
+    command.duration_ms = 1000U;
+    EXPECT(st_command_runtime_handle(&environment_runtime, &command, 2000U, &ack) == 0);
+    EXPECT(ack.status == ST_COMMAND_STATUS_REJECTED);
+    EXPECT(ack.reason == ST_COMMAND_REASON_UNSUPPORTED);
+    EXPECT(environment_runtime.test_output_led_active == 0U);
+    return 0;
+}
+
 int st_run_command_actuation_tests(void)
 {
     int failures = 0;
@@ -258,5 +327,6 @@ int st_run_command_actuation_tests(void)
     failures += test_state_event_rules_and_revision_scope();
     failures += test_persistence_migration_and_idempotency();
     failures += test_v2_persistence_migration();
+    failures += test_test_output_actuation();
     return failures;
 }

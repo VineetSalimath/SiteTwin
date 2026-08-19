@@ -159,14 +159,17 @@ static int test_condition_clear_retrigger_ack_and_silence(void)
     EXPECT(event.event_kind == ST_CONTROL_EVENT_ALARM_ACKNOWLEDGEMENT);
     EXPECT(event.acknowledged == 1U && event.active == 1U);
 
-    EXPECT(st_alarm_runtime_silence(&runtime, first_instance, 100U, 30U) == 0);
+    EXPECT(st_alarm_runtime_silence(&runtime, first_instance, 30U) == 0);
     EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
     EXPECT(event.silenced == 1U && event.active == 1U);
+    /* No auto-expiry: tick() is a no-op now, silence persists across any
+     * number of ticks, however far apart, until the condition itself
+     * clears. */
     st_alarm_runtime_tick(&runtime, 129U);
     EXPECT(st_alarm_runtime_next_event(&runtime, &event) != 0);
-    st_alarm_runtime_tick(&runtime, 130U);
-    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
-    EXPECT(event.transition == ST_CONTROL_TRANSITION_SILENCE_EXPIRED);
+    st_alarm_runtime_tick(&runtime, 100000U);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) != 0);
+    EXPECT(runtime.silence_active == 1U);
     EXPECT(st_alarm_runtime_condition_active(&runtime, first_instance) == 1);
 
     reading = co2_reading(800.0F, 2U, 140U);
@@ -174,12 +177,25 @@ static int test_condition_clear_retrigger_ack_and_silence(void)
     EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
     EXPECT(event.transition == ST_CONTROL_TRANSITION_CLEARED);
     EXPECT(event.instance_id == first_instance);
+    /* Real clear of the silenced instance resets silence -- this is now the
+     * ONLY way silence ends -- and now also emits its own ALARM_SILENCE
+     * event (transition=cleared, silenced=0) so bridge/TB learn about the
+     * reset too, not just the Pod's own local state. */
+    EXPECT(runtime.silence_active == 0U);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
+    EXPECT(event.event_kind == ST_CONTROL_EVENT_ALARM_SILENCE);
+    EXPECT(event.transition == ST_CONTROL_TRANSITION_CLEARED);
+    EXPECT(event.silenced == 0U && event.active == 0U);
+    EXPECT(event.instance_id == first_instance);
 
     reading = co2_reading(1300.0F, 3U, 150U);
     EXPECT(st_alarm_runtime_ingest(&runtime, &reading, 150U) == 1);
     EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
     EXPECT(event.transition == ST_CONTROL_TRANSITION_ACTIVE);
     EXPECT(event.instance_id != first_instance);
+    /* New episode (new instance_id) is not silenced by the prior episode's
+     * now-cleared silence. */
+    EXPECT(runtime.silence_active == 0U);
     EXPECT(st_alarm_runtime_acknowledge(&runtime, event.instance_id, 160U) == 0);
     drain_alarm_events(&runtime);
 
