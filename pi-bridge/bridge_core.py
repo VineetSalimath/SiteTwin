@@ -165,11 +165,15 @@ def command_from_rpc(content, now_ms):
         command["target"] = "alarm"
         command["alarm_instance_id"] = _integer(
             params.get("alarm_instance_id"), "alarm_instance_id", minimum=1)
-        command["duration_ms"] = _integer(params.get("duration_ms"),
-                                           "duration_ms", minimum=1,
-                                           maximum=60000)
+        # No duration_ms -- silence now lasts until the condition itself
+        # clears, not a timed auto-expiry (see alarm.c). Nothing to
+        # validate here anymore.
     elif method == "test_output":
-        command["target"] = "alarm"
+        target = params.get("target")
+        if target not in ("led", "buzzer"):
+            raise InvalidRpc(
+                "test_output requires target: 'led' or 'buzzer'")
+        command["target"] = target
         command["duration_ms"] = _integer(params.get("duration_ms", 1000),
                                            "duration_ms", minimum=1,
                                            maximum=60000)
