@@ -274,9 +274,27 @@ static st_driver_result_t finish_measurement(st_sgp40_t *sensor,
         return stale_or_failure(sensor, now_ms, ST_QUALITY_OUT_OF_RANGE,
                                 ST_DRIVER_ERROR, 1);
     }
-    if (sensor->last_process_at_ms != 0U &&
-        now_ms - sensor->last_process_at_ms != sensor->config.algorithm_interval_ms) {
-        reset_algorithm(sensor);
+    /* Real scheduling never lands on an exact millisecond match (see
+     * sensor_registry.c: next_sample_at_ms is a floor, not an exact
+     * trigger -- actual elapsed time is always interval_ms plus some
+     * scheduling jitter). A strict equality check here means almost
+     * every real measurement cycle looks "abnormal" and resets the
+     * algorithm before it can ever finish GasIndexAlgorithm's 45-second
+     * warm-up -- confirmed on real hardware: SGP40 produced zero
+     * telemetry indefinitely, not just during warm-up. Tolerate up to
+     * 50% jitter in either direction; still reset on a genuine gap
+     * (e.g. a fault/reprobe stall lasting more than 1.5x the interval),
+     * which is what this check was presumably guarding against. */
+    if (sensor->last_process_at_ms != 0U) {
+        uint64_t elapsed_since_last_process = now_ms - sensor->last_process_at_ms;
+        uint64_t interval_low = sensor->config.algorithm_interval_ms / 2U;
+        uint64_t interval_high =
+            sensor->config.algorithm_interval_ms + sensor->config.algorithm_interval_ms / 2U;
+
+        if (elapsed_since_last_process < interval_low ||
+            elapsed_since_last_process > interval_high) {
+            reset_algorithm(sensor);
+        }
     }
 
     algorithm_result = st_voc_index_algorithm_process(&sensor->algorithm,
