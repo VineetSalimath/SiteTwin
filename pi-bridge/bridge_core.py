@@ -3,10 +3,12 @@
 from collections import OrderedDict
 from dataclasses import dataclass
 import json
+import logging
 import math
 import re
 import time
 
+log = logging.getLogger(__name__)
 
 COMMAND_SCHEMA_VERSION = 3
 CONTROL_SCHEMA_VERSION = 1
@@ -397,7 +399,8 @@ class RpcCommandBridge:
                     return "duplicate"
         try:
             pod_id, request_id, command = command_from_rpc(content, now_ms)
-        except InvalidRpc:
+        except InvalidRpc as exc:
+            log.warning("RPC rejected as invalid_syntax: %s (content=%r)", exc, content)
             if correlation is not None:
                 response = terminal_response(correlation[0], correlation[1], "rejected",
                                              "invalid_syntax", now_ms)
