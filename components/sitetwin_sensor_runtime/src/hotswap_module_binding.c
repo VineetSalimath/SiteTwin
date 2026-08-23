@@ -385,13 +385,10 @@ st_hal_result_t st_hotswap_module_binding_bus_probe(void *context, size_t port_i
     st_hotswap_module_binding_t *binding = (st_hotswap_module_binding_t *)context;
 
     (void)port_index;
-    if (binding == NULL || binding->io.i2c_bus.write == NULL) {
+    if (binding == NULL || binding->io.i2c_probe == NULL) {
         return ST_HAL_IO_ERROR;
     }
-    /* Zero-length write is the standard I2C "is anything ACKing this
-     * address" probe -- it does not require knowing the device's
-     * register protocol. */
-    return binding->io.i2c_bus.write(binding->io.i2c_bus.context, expected_address, NULL, 0U);
+    return binding->io.i2c_probe(binding->io.context, expected_address);
 }
 
 int st_hotswap_binding_get_pir(st_hotswap_module_binding_t *binding, size_t port_index,

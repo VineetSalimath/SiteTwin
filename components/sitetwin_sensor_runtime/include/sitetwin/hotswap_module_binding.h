@@ -81,6 +81,17 @@ typedef struct {
     st_i2c_bus_t i2c_bus;
 
     /*
+     * Explicit address-presence probe, deliberately decoupled from
+     * i2c_bus.write/read: a presence probe is a different operation from
+     * a real transaction, and backends implement it differently (a
+     * zero-length transmit on some stacks, a dedicated call such as
+     * ESP-IDF's i2c_master_probe() on others). ST_HAL_OK means something
+     * ACKed at that address; any other result means no response or a
+     * transport error, and is treated as a mismatch by the caller.
+     */
+    st_hal_result_t (*i2c_probe)(void *context, uint8_t address);
+
+    /*
      * Called once, at attach time, to obtain a OneWire bus for a specific
      * port (DS18B20 is the only OneWire type). The returned bus's own
      * reset/write/read implementation must select that port on the DATA

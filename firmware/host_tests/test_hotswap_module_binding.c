@@ -39,11 +39,6 @@ static st_hal_result_t fake_i2c_read(void *context, uint8_t address, uint8_t *da
     return ST_HAL_OK;
 }
 
-typedef struct {
-    size_t last_requested_port;
-    int calls;
-} fake_onewire_provider_t;
-
 static st_hal_result_t fake_onewire_reset(void *context)
 {
     (void)context;
@@ -65,15 +60,35 @@ static st_hal_result_t fake_onewire_read(void *context, uint8_t *data, size_t le
     return ST_HAL_OK;
 }
 
+/* One combined fixture for everything io.context needs to reach, since
+ * st_hotswap_binding_io_t carries a single context pointer shared across
+ * i2c_probe and data_common_bus_for_port. */
+typedef struct {
+    size_t onewire_last_requested_port;
+    int onewire_calls;
+    int probe_calls;
+    uint8_t probe_last_address;
+    st_hal_result_t probe_result;
+} fake_binding_fixture_t;
+
+static st_hal_result_t fake_i2c_probe(void *context, uint8_t address)
+{
+    fake_binding_fixture_t *fixture = (fake_binding_fixture_t *)context;
+
+    fixture->probe_calls++;
+    fixture->probe_last_address = address;
+    return fixture->probe_result;
+}
+
 static st_onewire_bus_t fake_data_common_bus_for_port(void *context, size_t port_index)
 {
-    fake_onewire_provider_t *provider = (fake_onewire_provider_t *)context;
+    fake_binding_fixture_t *fixture = (fake_binding_fixture_t *)context;
     st_onewire_bus_t bus;
 
-    provider->last_requested_port = port_index;
-    provider->calls++;
+    fixture->onewire_last_requested_port = port_index;
+    fixture->onewire_calls++;
     memset(&bus, 0, sizeof(bus));
-    bus.context = provider;
+    bus.context = fixture;
     bus.reset = fake_onewire_reset;
     bus.write = fake_onewire_write;
     bus.read = fake_onewire_read;
@@ -81,16 +96,20 @@ static st_onewire_bus_t fake_data_common_bus_for_port(void *context, size_t port
 }
 
 static void make_binding(st_hotswap_module_binding_t *binding, st_sensor_registry_t *registry,
-                         fake_onewire_provider_t *onewire_provider)
+                         fake_binding_fixture_t *fixture)
 {
     st_hotswap_binding_io_t io;
+
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->probe_result = ST_HAL_OK; /* tests override this when they want a mismatch */
 
     memset(&io, 0, sizeof(io));
     io.i2c_bus.context = NULL;
     io.i2c_bus.write = fake_i2c_write;
     io.i2c_bus.read = fake_i2c_read;
+    io.i2c_probe = fake_i2c_probe;
     io.data_common_bus_for_port = fake_data_common_bus_for_port;
-    io.context = onewire_provider;
+    io.context = fixture;
 
     st_sensor_registry_init(registry, "TEST_POD", 1U);
     if (st_hotswap_module_binding_init(binding, &io, registry, ST_HOTSWAP_BINDING_MAX_PORTS) !=
@@ -116,12 +135,11 @@ static int test_pir_attach_and_detach(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
-    fake_onewire_provider_t onewire_provider;
+    fake_binding_fixture_t fixture;
     st_pir_t *pir = NULL;
     const char *sensor_id = NULL;
 
-    memset(&onewire_provider, 0, sizeof(onewire_provider));
-    make_binding(&binding, &registry, &onewire_provider);
+    make_binding(&binding, &registry, &fixture);
 
     EXPECT(st_hotswap_module_binding_attach(&binding, 1U, ST_MODULE_TYPE_PIR, 5000U) == 0);
     EXPECT(st_hotswap_binding_get_pir(&binding, 1U, &pir, &sensor_id) == 1);
@@ -139,12 +157,11 @@ static int test_reed_attach_and_get_wrong_port(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
-    fake_onewire_provider_t onewire_provider;
+    fake_binding_fixture_t fixture;
     st_reed_debounce_t *reed = NULL;
     const char *sensor_id = NULL;
 
-    memset(&onewire_provider, 0, sizeof(onewire_provider));
-    make_binding(&binding, &registry, &onewire_provider);
+    make_binding(&binding, &registry, &fixture);
 
     EXPECT(st_hotswap_module_binding_attach(&binding, 2U, ST_MODULE_TYPE_REED, 1000U) == 0);
     EXPECT(st_hotswap_binding_get_reed(&binding, 2U, &reed, &sensor_id) == 1);
@@ -161,10 +178,9 @@ static int test_registry_backed_type_attaches_and_detaches(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
-    fake_onewire_provider_t onewire_provider;
+    fake_binding_fixture_t fixture;
 
-    memset(&onewire_provider, 0, sizeof(onewire_provider));
-    make_binding(&binding, &registry, &onewire_provider);
+    make_binding(&binding, &registry, &fixture);
 
     EXPECT(count_attached_registry_slots(&registry) == 0U);
     EXPECT(st_hotswap_module_binding_attach(&binding, 0U, ST_MODULE_TYPE_BH1750, 1000U) == 0);
@@ -186,14 +202,13 @@ static int test_ds18b20_requests_onewire_bus_for_its_own_port(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
-    fake_onewire_provider_t onewire_provider;
+    fake_binding_fixture_t fixture;
 
-    memset(&onewire_provider, 0, sizeof(onewire_provider));
-    make_binding(&binding, &registry, &onewire_provider);
+    make_binding(&binding, &registry, &fixture);
 
     EXPECT(st_hotswap_module_binding_attach(&binding, 3U, ST_MODULE_TYPE_DS18B20, 1000U) == 0);
-    EXPECT(onewire_provider.calls == 1);
-    EXPECT(onewire_provider.last_requested_port == 3U);
+    EXPECT(fixture.onewire_calls == 1);
+    EXPECT(fixture.onewire_last_requested_port == 3U);
     EXPECT(count_attached_registry_slots(&registry) == 1U);
 
     return 0;
@@ -203,12 +218,18 @@ static int test_ds18b20_fails_cleanly_without_onewire_provider(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
     st_hotswap_binding_io_t io;
+
+    memset(&fixture, 0, sizeof(fixture));
+    fixture.probe_result = ST_HAL_OK;
 
     st_sensor_registry_init(&registry, "TEST_POD", 1U);
     memset(&io, 0, sizeof(io));
     io.i2c_bus.write = fake_i2c_write;
     io.i2c_bus.read = fake_i2c_read;
+    io.i2c_probe = fake_i2c_probe;
+    io.context = &fixture;
     io.data_common_bus_for_port = NULL; /* deliberately not wired up */
     EXPECT(st_hotswap_module_binding_init(&binding, &io, &registry,
                                           ST_HOTSWAP_BINDING_MAX_PORTS) == 0);
@@ -223,10 +244,9 @@ static int test_unknown_and_empty_never_attach(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
-    fake_onewire_provider_t onewire_provider;
+    fake_binding_fixture_t fixture;
 
-    memset(&onewire_provider, 0, sizeof(onewire_provider));
-    make_binding(&binding, &registry, &onewire_provider);
+    make_binding(&binding, &registry, &fixture);
 
     EXPECT(st_hotswap_module_binding_attach(&binding, 0U, ST_MODULE_TYPE_UNKNOWN, 1000U) != 0);
     EXPECT(st_hotswap_module_binding_attach(&binding, 0U, ST_MODULE_TYPE_EMPTY, 1000U) != 0);
@@ -264,18 +284,35 @@ static int test_bus_probe_addresses_match_contract(void)
     return 0;
 }
 
-static int test_bus_probe_uses_zero_length_write(void)
+static int test_bus_probe_delegates_to_i2c_probe_callback(void)
 {
     st_hotswap_module_binding_t binding;
     st_sensor_registry_t registry;
-    fake_onewire_provider_t onewire_provider;
+    fake_binding_fixture_t fixture;
     st_hal_result_t result;
 
-    memset(&onewire_provider, 0, sizeof(onewire_provider));
-    make_binding(&binding, &registry, &onewire_provider);
+    make_binding(&binding, &registry, &fixture);
 
-    result = st_hotswap_module_binding_bus_probe(&binding, 0U, ST_SHT41_DEFAULT_ADDRESS);
+    result = st_hotswap_module_binding_bus_probe(&binding, 2U, ST_SHT41_DEFAULT_ADDRESS);
     EXPECT(result == ST_HAL_OK);
+    EXPECT(fixture.probe_calls == 1);
+    EXPECT(fixture.probe_last_address == ST_SHT41_DEFAULT_ADDRESS);
+
+    return 0;
+}
+
+static int test_bus_probe_propagates_mismatch(void)
+{
+    st_hotswap_module_binding_t binding;
+    st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
+    st_hal_result_t result;
+
+    make_binding(&binding, &registry, &fixture);
+    fixture.probe_result = ST_HAL_NOT_PRESENT;
+
+    result = st_hotswap_module_binding_bus_probe(&binding, 0U, ST_INA219_DEFAULT_ADDRESS);
+    EXPECT(result == ST_HAL_NOT_PRESENT);
 
     return 0;
 }
@@ -291,7 +328,8 @@ int st_run_hotswap_module_binding_tests(void)
     failures += test_ds18b20_fails_cleanly_without_onewire_provider();
     failures += test_unknown_and_empty_never_attach();
     failures += test_bus_probe_addresses_match_contract();
-    failures += test_bus_probe_uses_zero_length_write();
+    failures += test_bus_probe_delegates_to_i2c_probe_callback();
+    failures += test_bus_probe_propagates_mismatch();
 
     if (failures == 0) {
         printf("test_hotswap_module_binding: all tests passed\n");
