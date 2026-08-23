@@ -2,6 +2,7 @@ idf_component_register(SRCS "src/sht41.c" "src/bh1750.c" "src/reed.c" "src/ina21
                             "src/pir.c" "src/adxl345.c" "src/ds18b20.c"
                             "src/scd41.c"
                             "src/sgp40.c"
+                            "src/hotswap_module_binding.c"
                             "src/voc_index_algorithm.c"
                             "third_party/sensirion_gas_index_algorithm/sensirion_gas_index_algorithm.c"
                        INCLUDE_DIRS "include"

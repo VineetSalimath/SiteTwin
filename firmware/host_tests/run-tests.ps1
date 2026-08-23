@@ -28,7 +28,7 @@ $sources = @(
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\logical_channel_adapter.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\final_pcb_board.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\board_port_manager.c'),
-    (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\hotswap_module_binding.c'),
+    (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\hotswap_module_binding.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\hotswap_zigbee_slot.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensor_runtime\src\module_instance.c'),
     (Join-Path $repositoryRoot 'components\sitetwin_sensors\src\scd41.c'),
