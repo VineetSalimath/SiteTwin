@@ -70,8 +70,6 @@ typedef struct {
 } st_hotswap_port_slot_t;
 
 typedef struct {
-    void *context;
-
     /*
      * The final PCB's I2C lines are shared across all four ports and are
      * not muxed (the contract: "I2C is shared and does not pass through
@@ -88,7 +86,14 @@ typedef struct {
      * ESP-IDF's i2c_master_probe() on others). ST_HAL_OK means something
      * ACKed at that address; any other result means no response or a
      * transport error, and is treated as a mismatch by the caller.
+     *
+     * i2c_probe_context is passed as this callback's context and is
+     * independent of data_common_context below -- the two callbacks
+     * naturally need different backing objects (e.g. a shared I2C bus
+     * instance vs. a mux/port_ops instance), so they are not forced to
+     * share one.
      */
+    void *i2c_probe_context;
     st_hal_result_t (*i2c_probe)(void *context, uint8_t address);
 
     /*
@@ -97,8 +102,10 @@ typedef struct {
      * reset/write/read implementation must select that port on the DATA
      * mux before each real transaction -- this binding layer does not do
      * that itself and does not assume the mux stays pointed at this port
-     * between calls.
+     * between calls. data_common_context is this callback's own context,
+     * independent of i2c_probe_context above.
      */
+    void *data_common_context;
     st_onewire_bus_t (*data_common_bus_for_port)(void *context, size_t port_index);
 } st_hotswap_binding_io_t;
 

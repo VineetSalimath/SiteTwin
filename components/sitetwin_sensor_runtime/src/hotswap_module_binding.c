@@ -237,7 +237,7 @@ static int attach_ds18b20(st_hotswap_port_slot_t *slot, const st_hotswap_binding
         return -1;
     }
     memset(&config, 0, sizeof(config));
-    config.bus = io->data_common_bus_for_port(io->context, port_index);
+    config.bus = io->data_common_bus_for_port(io->data_common_context, port_index);
     config.resolution_bits = ST_HOTSWAP_DS18B20_RESOLUTION_BITS;
     config.sample_interval_ms = ST_HOTSWAP_SAMPLE_INTERVAL_MS;
     config.cache_validity_ms = ST_HOTSWAP_CACHE_VALIDITY_MS;
@@ -388,7 +388,7 @@ st_hal_result_t st_hotswap_module_binding_bus_probe(void *context, size_t port_i
     if (binding == NULL || binding->io.i2c_probe == NULL) {
         return ST_HAL_IO_ERROR;
     }
-    return binding->io.i2c_probe(binding->io.context, expected_address);
+    return binding->io.i2c_probe(binding->io.i2c_probe_context, expected_address);
 }
 
 int st_hotswap_binding_get_pir(st_hotswap_module_binding_t *binding, size_t port_index,

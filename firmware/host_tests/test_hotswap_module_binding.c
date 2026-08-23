@@ -60,9 +60,11 @@ static st_hal_result_t fake_onewire_read(void *context, uint8_t *data, size_t le
     return ST_HAL_OK;
 }
 
-/* One combined fixture for everything io.context needs to reach, since
- * st_hotswap_binding_io_t carries a single context pointer shared across
- * i2c_probe and data_common_bus_for_port. */
+/* One combined fixture is still fine to use for both callbacks in tests
+ * (they just each get their own explicit context field pointing at the
+ * same fixture) -- the point of the split in the real header is that
+ * *production* callers aren't forced to share one context, not that
+ * tests can't. */
 typedef struct {
     size_t onewire_last_requested_port;
     int onewire_calls;
@@ -108,8 +110,9 @@ static void make_binding(st_hotswap_module_binding_t *binding, st_sensor_registr
     io.i2c_bus.write = fake_i2c_write;
     io.i2c_bus.read = fake_i2c_read;
     io.i2c_probe = fake_i2c_probe;
+    io.i2c_probe_context = fixture;
     io.data_common_bus_for_port = fake_data_common_bus_for_port;
-    io.context = fixture;
+    io.data_common_context = fixture;
 
     st_sensor_registry_init(registry, "TEST_POD", 1U);
     if (st_hotswap_module_binding_init(binding, &io, registry, ST_HOTSWAP_BINDING_MAX_PORTS) !=
@@ -229,7 +232,7 @@ static int test_ds18b20_fails_cleanly_without_onewire_provider(void)
     io.i2c_bus.write = fake_i2c_write;
     io.i2c_bus.read = fake_i2c_read;
     io.i2c_probe = fake_i2c_probe;
-    io.context = &fixture;
+    io.i2c_probe_context = &fixture;
     io.data_common_bus_for_port = NULL; /* deliberately not wired up */
     EXPECT(st_hotswap_module_binding_init(&binding, &io, &registry,
                                           ST_HOTSWAP_BINDING_MAX_PORTS) == 0);

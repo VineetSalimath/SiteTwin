@@ -54,6 +54,7 @@ $sources = @(
     (Join-Path $PSScriptRoot 'test_board_port_manager.c'),
     (Join-Path $PSScriptRoot 'test_hotswap_module_binding.c'),
     (Join-Path $PSScriptRoot 'test_hotswap_zigbee_slot.c'),
+    (Join-Path $PSScriptRoot 'test_hotswap_integration.c'),
     (Join-Path $PSScriptRoot 'test_sensor_foundation.c'),
     (Join-Path $PSScriptRoot 'test_bh1750.c'),
     (Join-Path $PSScriptRoot 'test_reed.c'),

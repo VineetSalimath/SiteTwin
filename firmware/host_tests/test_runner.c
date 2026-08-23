@@ -28,6 +28,7 @@ int st_run_final_pcb_board_tests(void);
 int st_run_board_port_manager_tests(void);
 int st_run_hotswap_module_binding_tests(void);
 int st_run_hotswap_zigbee_slot_tests(void);
+int st_run_hotswap_integration_tests(void);
 
 #define EXPECT(condition)                                                                        \
     do {                                                                                         \
@@ -720,6 +721,7 @@ int main(void)
     failures += st_run_board_port_manager_tests();
     failures += st_run_hotswap_module_binding_tests();
     failures += st_run_hotswap_zigbee_slot_tests();
+    failures += st_run_hotswap_integration_tests();
     failures += test_stress_runtime_and_gateway();
 
     if (failures != 0) {
