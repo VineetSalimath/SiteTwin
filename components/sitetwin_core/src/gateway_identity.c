@@ -40,6 +40,18 @@ static const st_gateway_sensor_identity_t sensor_identity_table[] = {
     {1U, ST_SENSOR_CURRENT_MA, "ina219_current"},
     {2U, ST_SENSOR_VIBRATION_RMS_G, "adxl345_vibration"},
     {3U, ST_SENSOR_TEMPERATURE_C, "ds18b20_temperature"},
+    /* Final-PCB hot-swap port health/status events (insertion, removal,
+     * identification/attach faults) -- not a real sensor reading, so
+     * ST_SENSOR_UNKNOWN is the deliberate marker kind. sensor_slot is
+     * the only field that can distinguish which physical port an event
+     * came from, since sensor_id itself is never transmitted over
+     * Zigbee (it's reconstructed here). See
+     * hotswap_zigbee_slot.h/st_pod_runtime_emit_health for the pod side
+     * of this contract; keep the slot numbers in sync if either changes. */
+    {10U, ST_SENSOR_UNKNOWN, "port0_status"},
+    {11U, ST_SENSOR_UNKNOWN, "port1_status"},
+    {12U, ST_SENSOR_UNKNOWN, "port2_status"},
+    {13U, ST_SENSOR_UNKNOWN, "port3_status"},
 };
 
 static int copy_name(char *destination, size_t capacity, const char *source)

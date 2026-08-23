@@ -23,6 +23,12 @@ static const st_hotswap_slot_entry_t kSlotTable[] = {
     {"ina219_current", 1U},
     {"adxl345_vibration", 2U},
     {"ds18b20_temperature", 3U},
+    /* Port health/status events -- see gateway_identity.c's matching
+     * table entries and st_pod_runtime_emit_health's doc comment. */
+    {"port0_status", 10U},
+    {"port1_status", 11U},
+    {"port2_status", 12U},
+    {"port3_status", 13U},
 };
 
 int st_hotswap_zigbee_sensor_slot(const char *sensor_id, uint8_t *out_slot)

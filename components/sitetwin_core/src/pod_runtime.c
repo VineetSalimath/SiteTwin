@@ -111,6 +111,34 @@ int st_pod_runtime_emit_event(st_pod_runtime_t *runtime, const char *sensor_id,
     return st_telemetry_queue_push(&runtime->outbound, &record);
 }
 
+int st_pod_runtime_emit_health(st_pod_runtime_t *runtime, const char *sensor_id,
+                               uint64_t now_ms, float value)
+{
+    st_telemetry_record_t record;
+
+    if (runtime == NULL || sensor_id == NULL) {
+        return -1;
+    }
+
+    memset(&record, 0, sizeof(record));
+    record.record_class = ST_RECORD_HEALTH;
+    record.priority = ST_PRIORITY_HEALTH;
+    copy_string(record.reading.pod_id, sizeof(record.reading.pod_id), runtime->registry.pod_id);
+    copy_string(record.reading.sensor_id, sizeof(record.reading.sensor_id), sensor_id);
+    record.reading.sensor_kind = ST_SENSOR_UNKNOWN;
+    record.reading.unit = ST_UNIT_NONE;
+    record.reading.sequence = ++runtime->event_sequence;
+    record.reading.boot_id = runtime->registry.boot_id;
+    record.reading.uptime_ms = now_ms;
+    record.reading.value = value;
+    record.reading.quality_flags = ST_QUALITY_VALID;
+    if (runtime->reading_observer != NULL) {
+        (void)runtime->reading_observer(runtime->reading_observer_context,
+                                        &record.reading, now_ms);
+    }
+    return st_telemetry_queue_push(&runtime->outbound, &record);
+}
+
 int st_pod_runtime_next_telemetry(st_pod_runtime_t *runtime, st_telemetry_record_t *record)
 {
     return runtime == NULL ? -1 : st_telemetry_queue_pop(&runtime->outbound, record);

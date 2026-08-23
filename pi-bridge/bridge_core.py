@@ -209,8 +209,19 @@ def telemetry_projection(payload):
             attributes[f"{sensor_id}_{field}"] = payload[field]
 
     if payload.get("record_class") == "health":
-        telemetry = {f"{sensor_id}_heartbeat": True}
-        prefix = f"{sensor_id}_heartbeat"
+        # A health record is a system/status event (e.g. a hot-swap
+        # port's insertion, removal, or identification/attach fault),
+        # not a real sensor reading -- but it still carries a real,
+        # meaningful value (see st_pod_runtime_emit_health on the
+        # firmware side), so it must not be flattened to a bare
+        # liveness flag. heartbeat stays alongside it as a simple
+        # "we heard from this sensor_id" signal for anything that
+        # wants just that.
+        telemetry = {
+            f"{sensor_id}_heartbeat": True,
+            f"{sensor_id}_status": payload["value"],
+        }
+        prefix = f"{sensor_id}_status"
     else:
         telemetry = {sensor_id: payload["value"]}
         prefix = sensor_id

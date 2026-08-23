@@ -1612,6 +1612,8 @@ static void pod_telemetry_task(void *context)
                 st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
 
                 {
+                    static const char *const kPortStatusSensorId[ST_FINAL_PCB_PORT_COUNT] = {
+                        "port0_status", "port1_status", "port2_status", "port3_status"};
                     size_t diag_port;
 
                     for (diag_port = 0U; diag_port < ST_FINAL_PCB_PORT_COUNT; ++diag_port) {
@@ -1631,6 +1633,20 @@ static void pod_telemetry_task(void *context)
                                      (unsigned int)diag_state->last_identity.millivolts,
                                      (unsigned int)diag_state->last_identity.voltage_calibrated,
                                      (int)diag_state->last_identity.status);
+                            /* value encoding: lifecycle*10 + fault_reason
+                             * (fault_reason is always < 10, so this is
+                             * unambiguous) -- e.g. ACTIVE/no-fault = 60,
+                             * FAULTED/UNCLASSIFIED_ID = 71. Kept
+                             * deliberately simple rather than a second
+                             * wire-format contract; decode by reversing
+                             * the same arithmetic downstream. */
+                            if (st_pod_runtime_emit_health(
+                                    &pod_runtime, kPortStatusSensorId[diag_port], now_ms,
+                                    (float)((int)diag_state->lifecycle * 10 +
+                                           (int)diag_state->fault_reason)) != 0) {
+                                ESP_LOGW(TAG, "Dropping port %u status event: queue full",
+                                         (unsigned int)diag_port);
+                            }
                             final_pcb_last_lifecycle[diag_port] = diag_state->lifecycle;
                             final_pcb_last_fault_reason[diag_port] = diag_state->fault_reason;
                         }

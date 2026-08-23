@@ -29,6 +29,10 @@ static const st_expected_entry_t kExpected[] = {
     {"ina219_current", ST_SENSOR_CURRENT_MA},
     {"adxl345_vibration", ST_SENSOR_VIBRATION_RMS_G},
     {"ds18b20_temperature", ST_SENSOR_TEMPERATURE_C},
+    {"port0_status", ST_SENSOR_UNKNOWN},
+    {"port1_status", ST_SENSOR_UNKNOWN},
+    {"port2_status", ST_SENSOR_UNKNOWN},
+    {"port3_status", ST_SENSOR_UNKNOWN},
 };
 
 /* This is the real, load-bearing test: every hot-swap sensor_id's chosen

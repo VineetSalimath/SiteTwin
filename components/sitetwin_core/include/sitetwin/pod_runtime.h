@@ -29,6 +29,17 @@ void st_pod_runtime_set_reading_observer(
     void *context);
 int st_pod_runtime_emit_event(st_pod_runtime_t *runtime, const char *sensor_id,
                               st_sensor_kind_t sensor_kind, uint64_t now_ms, float value);
+/*
+ * For system/status events that are not a real sensor reading (e.g. a
+ * hot-swap port's insertion, removal, or identification/attach fault) --
+ * always tagged ST_RECORD_HEALTH/ST_PRIORITY_HEALTH and
+ * ST_SENSOR_UNKNOWN/ST_UNIT_NONE, distinguishing it from every real
+ * sensor_kind. value's meaning is caller-defined (e.g. an encoded event
+ * or fault-reason code); sensor_id should be a synthetic, stable label
+ * (e.g. "port2_status"), not a real attached sensor's sensor_id.
+ */
+int st_pod_runtime_emit_health(st_pod_runtime_t *runtime, const char *sensor_id,
+                               uint64_t now_ms, float value);
 int st_pod_runtime_next_telemetry(st_pod_runtime_t *runtime, st_telemetry_record_t *record);
 
 #endif

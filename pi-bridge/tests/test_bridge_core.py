@@ -106,6 +106,22 @@ class BridgeCoreTests(unittest.TestCase):
         self.assertNotIn("scd41_co2_boot_id", telemetry)
         self.assertEqual(telemetry["scd41_co2"], 750.0)
 
+    def test_health_record_preserves_value_not_just_heartbeat(self):
+        # A health record (e.g. a hot-swap port's status/fault event)
+        # must carry its real value through, not collapse to a bare
+        # True flag -- see st_pod_runtime_emit_health on the firmware
+        # side and this function's own comment for why.
+        payload = {"pod_id": "POD_1FBA", "sensor_id": "port2_status",
+                   "sensor_kind": "unknown", "record_class": "health",
+                   "sequence": 3, "boot_id": 4, "uptime_ms": 12000,
+                   "value": 71.0, "unit": "none", "quality_flags": 1}
+        pod_id, attributes, telemetry = telemetry_projection(payload)
+        self.assertEqual(pod_id, "POD_1FBA")
+        self.assertEqual(telemetry["port2_status_status"], 71.0)
+        self.assertTrue(telemetry["port2_status_heartbeat"])
+        self.assertEqual(telemetry["port2_status_status_sequence"], 3)
+        self.assertEqual(attributes["port2_status_record_class"], "health")
+
 
 if __name__ == "__main__":
     unittest.main()
