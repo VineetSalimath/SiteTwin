@@ -45,21 +45,22 @@ int st_board_port_manager_init(st_board_port_manager_t *manager,
     return 0;
 }
 
-static void detach_if_committed(st_board_port_manager_t *manager, size_t index)
+static void detach_if_committed(st_board_port_manager_t *manager, size_t index,
+                                uint64_t now_ms)
 {
     st_board_port_state_t *state = &manager->ports[index];
 
     if (state->committed_type != ST_MODULE_TYPE_EMPTY &&
         state->committed_type != ST_MODULE_TYPE_UNKNOWN) {
         if (manager->callbacks.detach != NULL) {
-            manager->callbacks.detach(manager->callbacks.context, index);
+            manager->callbacks.detach(manager->callbacks.context, index, now_ms);
         }
     }
     state->committed_type = ST_MODULE_TYPE_EMPTY;
 }
 
 static void commit_observed_type(st_board_port_manager_t *manager, size_t index,
-                                  st_module_type_t observed)
+                                  st_module_type_t observed, uint64_t now_ms)
 {
     st_board_port_state_t *state = &manager->ports[index];
 
@@ -72,7 +73,7 @@ static void commit_observed_type(st_board_port_manager_t *manager, size_t index,
     /* Anything previously attached is torn down before we act on the new,
      * now-stable reading -- this covers plain removal, a straight swap to
      * a different module, and recovery out of a prior fault uniformly. */
-    detach_if_committed(manager, index);
+    detach_if_committed(manager, index, now_ms);
 
     if (observed == ST_MODULE_TYPE_EMPTY) {
         state->lifecycle = ST_MODULE_EMPTY;
@@ -118,7 +119,7 @@ static void commit_observed_type(st_board_port_manager_t *manager, size_t index,
     {
         int attach_result = (manager->callbacks.attach != NULL)
                                 ? manager->callbacks.attach(manager->callbacks.context,
-                                                            index, observed)
+                                                            index, observed, now_ms)
                                 : -1;
         if (attach_result != 0) {
             state->lifecycle = ST_MODULE_FAULTED;
@@ -132,7 +133,7 @@ static void commit_observed_type(st_board_port_manager_t *manager, size_t index,
     state->committed_type = observed;
 }
 
-static void poll_port(st_board_port_manager_t *manager, size_t index)
+static void poll_port(st_board_port_manager_t *manager, size_t index, uint64_t now_ms)
 {
     st_board_port_state_t *state = &manager->ports[index];
     st_module_identity_t identity;
@@ -173,10 +174,10 @@ static void poll_port(st_board_port_manager_t *manager, size_t index)
         return; /* stable and already handled (attached or faulted): nothing to do */
     }
 
-    commit_observed_type(manager, index, identity.module_type);
+    commit_observed_type(manager, index, identity.module_type, now_ms);
 }
 
-void st_board_port_manager_poll(st_board_port_manager_t *manager)
+void st_board_port_manager_poll(st_board_port_manager_t *manager, uint64_t now_ms)
 {
     size_t index;
 
@@ -184,7 +185,7 @@ void st_board_port_manager_poll(st_board_port_manager_t *manager)
         return;
     }
     for (index = 0U; index < manager->port_count; ++index) {
-        poll_port(manager, index);
+        poll_port(manager, index, now_ms);
     }
 }
 

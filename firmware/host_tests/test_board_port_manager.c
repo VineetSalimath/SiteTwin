@@ -106,18 +106,21 @@ typedef struct {
     st_hal_result_t probe_result;
 } fake_callback_log_t;
 
-static int fake_attach(void *context, size_t port_index, st_module_type_t module_type)
+static int fake_attach(void *context, size_t port_index, st_module_type_t module_type,
+                       uint64_t now_ms)
 {
     fake_callback_log_t *log = (fake_callback_log_t *)context;
+    (void)now_ms;
     log->attach_calls++;
     log->last_attach_port = port_index;
     log->last_attach_type = module_type;
     return log->attach_should_fail ? -1 : 0;
 }
 
-static void fake_detach(void *context, size_t port_index)
+static void fake_detach(void *context, size_t port_index, uint64_t now_ms)
 {
     fake_callback_log_t *log = (fake_callback_log_t *)context;
+    (void)now_ms;
     log->detach_calls++;
     log->last_detach_port = port_index;
 }
@@ -178,11 +181,11 @@ static int test_insert_requires_stable_scans(void)
 
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager); /* UNKNOWN reading #1 -> not stable yet, no attach */
+    st_board_port_manager_poll(&manager, 1000U); /* UNKNOWN reading #1 -> not stable yet, no attach */
     EXPECT(log.attach_calls == 0);
-    st_board_port_manager_poll(&manager); /* SHT41 reading #1 -> pending resets, count=1 */
+    st_board_port_manager_poll(&manager, 1000U); /* SHT41 reading #1 -> pending resets, count=1 */
     EXPECT(log.attach_calls == 0);
-    st_board_port_manager_poll(&manager); /* SHT41 reading #2 -> stable, should attach now */
+    st_board_port_manager_poll(&manager, 1000U); /* SHT41 reading #2 -> stable, should attach now */
     EXPECT(log.attach_calls == 1);
     EXPECT(log.last_attach_type == ST_MODULE_TYPE_SHT41);
     EXPECT(log.last_attach_port == 0U);
@@ -227,14 +230,14 @@ static int test_removal_detaches(void)
     config.stable_scan_count = 2U;
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
     EXPECT(log.attach_calls == 1);
     EXPECT(log.detach_calls == 0);
 
-    st_board_port_manager_poll(&manager); /* EMPTY #1 -> not stable yet */
+    st_board_port_manager_poll(&manager, 1000U); /* EMPTY #1 -> not stable yet */
     EXPECT(log.detach_calls == 0);
-    st_board_port_manager_poll(&manager); /* EMPTY #2 -> stable -> detach */
+    st_board_port_manager_poll(&manager, 1000U); /* EMPTY #2 -> stable -> detach */
     EXPECT(log.detach_calls == 1);
     EXPECT(log.last_detach_port == 0U);
 
@@ -275,9 +278,9 @@ static int test_unknown_id_never_attaches(void)
     config.stable_scan_count = 2U;
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
 
     EXPECT(log.attach_calls == 0);
     const st_board_port_state_t *state = st_board_port_manager_get_state(&manager, 0U);
@@ -321,8 +324,8 @@ static int test_bus_mismatch_faults_instead_of_attaching(void)
     config.stable_scan_count = 2U;
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
 
     EXPECT(log.probe_calls == 1);
     EXPECT(log.attach_calls == 0);
@@ -367,15 +370,15 @@ static int test_type_swap_detaches_old_before_attaching_new(void)
     config.stable_scan_count = 2U;
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
     EXPECT(log.attach_calls == 1);
     EXPECT(log.last_attach_type == ST_MODULE_TYPE_SCD41);
     EXPECT(log.detach_calls == 0);
 
-    st_board_port_manager_poll(&manager); /* INA219 #1 -> not stable yet, SCD41 stays committed */
+    st_board_port_manager_poll(&manager, 1000U); /* INA219 #1 -> not stable yet, SCD41 stays committed */
     EXPECT(log.detach_calls == 0);
-    st_board_port_manager_poll(&manager); /* INA219 #2 -> stable -> detach SCD41, attach INA219 */
+    st_board_port_manager_poll(&manager, 1000U); /* INA219 #2 -> stable -> detach SCD41, attach INA219 */
     EXPECT(log.detach_calls == 1);
     EXPECT(log.attach_calls == 2);
     EXPECT(log.last_attach_type == ST_MODULE_TYPE_INA219);
@@ -414,14 +417,14 @@ static int test_attach_failure_marks_faulted_without_retry_storm(void)
     config.stable_scan_count = 2U;
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
     EXPECT(log.attach_calls == 1);
 
     /* Reading stays REED and already-committed (well, faulted) -- must not
      * call attach() again every poll once the identity stops changing. */
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
     EXPECT(log.attach_calls == 1);
 
     const st_board_port_state_t *state = st_board_port_manager_get_state(&manager, 0U);
@@ -463,17 +466,17 @@ static int test_transient_hal_error_does_not_drop_active_port(void)
     config.stable_scan_count = 2U;
     EXPECT(st_board_port_manager_init(&manager, &ops, &callbacks, &config) == 0);
 
-    st_board_port_manager_poll(&manager);
-    st_board_port_manager_poll(&manager);
+    st_board_port_manager_poll(&manager, 1000U);
+    st_board_port_manager_poll(&manager, 1000U);
     EXPECT(log.attach_calls == 1);
 
-    st_board_port_manager_poll(&manager); /* MEASUREMENT_ERROR -> ignored, no detach */
+    st_board_port_manager_poll(&manager, 1000U); /* MEASUREMENT_ERROR -> ignored, no detach */
     EXPECT(log.detach_calls == 0);
     const st_board_port_state_t *state = st_board_port_manager_get_state(&manager, 0U);
     EXPECT(state->lifecycle == ST_MODULE_ACTIVE);
     EXPECT(state->committed_type == ST_MODULE_TYPE_ADXL345);
 
-    st_board_port_manager_poll(&manager); /* back to ADXL345 -> still just 1 stable count, stays active */
+    st_board_port_manager_poll(&manager, 1000U); /* back to ADXL345 -> still just 1 stable count, stays active */
     EXPECT(log.detach_calls == 0);
     EXPECT(log.attach_calls == 1);
 

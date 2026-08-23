@@ -33,7 +33,8 @@ typedef struct {
      * reading changes and re-stabilises (it will not hammer a failing
      * attach() every poll).
      */
-    int (*attach)(void *context, size_t port_index, st_module_type_t module_type);
+    int (*attach)(void *context, size_t port_index, st_module_type_t module_type,
+                  uint64_t now_ms);
 
     /*
      * Called whenever a previously committed (non-EMPTY, non-UNKNOWN)
@@ -41,7 +42,7 @@ typedef struct {
      * be safe to call even if attach() was never actually reached for
      * this port.
      */
-    void (*detach)(void *context, size_t port_index);
+    void (*detach)(void *context, size_t port_index, uint64_t now_ms);
 
     /*
      * Optional. If non-NULL and it returns true for a newly classified
@@ -91,9 +92,13 @@ int st_board_port_manager_init(st_board_port_manager_t *manager,
  * through the debounce/stable-commit state machine, and calls
  * attach/detach as needed. Call this on whatever cadence the caller's
  * main loop uses (e.g. every SENSOR_INTERVAL_MS); the manager does not
- * sleep, block, or own any timer beyond the per-poll scan counters.
+ * sleep or block beyond what ops->port_read_module_id does. now_ms is
+ * passed straight through to attach/detach and is not otherwise
+ * interpreted by the manager itself (its own debounce counters are
+ * scan-count-based, not time-based, so a roughly steady poll cadence is
+ * assumed rather than measured).
  */
-void st_board_port_manager_poll(st_board_port_manager_t *manager);
+void st_board_port_manager_poll(st_board_port_manager_t *manager, uint64_t now_ms);
 
 const st_board_port_state_t *st_board_port_manager_get_state(
     const st_board_port_manager_t *manager, size_t port_index);
