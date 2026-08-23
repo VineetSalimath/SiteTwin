@@ -1210,6 +1210,14 @@ static st_espidf_muxed_data_common_t final_pcb_muxed_data_common[ST_FINAL_PCB_PO
 static st_board_port_manager_t final_pcb_port_manager;
 static st_hotswap_module_binding_t final_pcb_binding;
 static uint64_t final_pcb_last_scan_at_ms;
+/* Temporary diagnostics: logs only on a lifecycle/fault transition per
+ * port, so we can see whether a silent port is unclassified, failed its
+ * bus cross-check, failed attach, or genuinely attached and just has
+ * nothing to report yet -- these all look identical from the outside
+ * (zero telemetry, zero error) without this. Remove once the hot-swap
+ * path is fully trusted. */
+static st_module_lifecycle_state_t final_pcb_last_lifecycle[ST_FINAL_PCB_PORT_COUNT];
+static st_port_fault_reason_t final_pcb_last_fault_reason[ST_FINAL_PCB_PORT_COUNT];
 
 static st_onewire_bus_t final_pcb_data_common_bus_for_port(void *context, size_t port_index)
 {
@@ -1602,6 +1610,32 @@ static void pod_telemetry_task(void *context)
             if (now_ms - final_pcb_last_scan_at_ms >= CONFIG_SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS) {
                 final_pcb_last_scan_at_ms = now_ms;
                 st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
+
+                {
+                    size_t diag_port;
+
+                    for (diag_port = 0U; diag_port < ST_FINAL_PCB_PORT_COUNT; ++diag_port) {
+                        const st_board_port_state_t *diag_state =
+                            st_board_port_manager_get_state(&final_pcb_port_manager, diag_port);
+
+                        if (diag_state != NULL &&
+                            (diag_state->lifecycle != final_pcb_last_lifecycle[diag_port] ||
+                             diag_state->fault_reason !=
+                                 final_pcb_last_fault_reason[diag_port])) {
+                            ESP_LOGI(TAG,
+                                     "Port %u: lifecycle=%d fault=%d committed_type=%d "
+                                     "raw_mv=%u calibrated=%u status=%d",
+                                     (unsigned int)diag_port, (int)diag_state->lifecycle,
+                                     (int)diag_state->fault_reason,
+                                     (int)diag_state->committed_type,
+                                     (unsigned int)diag_state->last_identity.millivolts,
+                                     (unsigned int)diag_state->last_identity.voltage_calibrated,
+                                     (int)diag_state->last_identity.status);
+                            final_pcb_last_lifecycle[diag_port] = diag_state->lifecycle;
+                            final_pcb_last_fault_reason[diag_port] = diag_state->fault_reason;
+                        }
+                    }
+                }
             }
             /* PIR/REED are event-driven and deliberately outside the
              * registry (see hotswap_module_binding.h) -- service
