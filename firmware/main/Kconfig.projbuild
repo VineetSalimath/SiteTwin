@@ -129,9 +129,22 @@ config SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED
     default n
     depends on SITETWIN_FINAL_PCB_PROFILE
     help
-        Keep disabled until the complete Q2/R36/load evidence establishes
-        active polarity, PWM envelope, current, and dissipation limits. H1/H2
-        do not consume this flag or enable GPIO19.
+        Gates whether the firmware drives GPIO19 at all. Leave disabled
+        until active polarity, PWM envelope, current, and dissipation
+        limits are confirmed on the assembled board. When enabled, the
+        firmware drives a 2s-on/1s-off blink pattern matching the
+        hardware team's own validated reference .ino (see
+        shared_alarm_indicator.h) whenever an alarm is active and not
+        silenced.
+
+config SITETWIN_FINAL_PCB_BUZZER_FREQUENCY_HZ
+    int "Shared alarm output PWM frequency (Hz)"
+    range 100 10000
+    default 2000
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Matches the hardware team's own validated reference .ino
+        (ALARM_PWM_FREQUENCY_HZ). Not independently re-tuned here.
 
 config SITETWIN_FINAL_PCB_DATA_MUX_SEL0_GPIO
     int "U4 DATA mux A/SEL0 GPIO"

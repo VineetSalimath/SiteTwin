@@ -28,6 +28,7 @@
 #include "sitetwin/espidf_i2c_bus.h"
 #include "sitetwin/espidf_muxed_data_common.h"
 #include "sitetwin/espidf_onewire_bus.h"
+#include "sitetwin/espidf_shared_alarm_output.h"
 #include "sitetwin/espidf_shared_i2c_bus.h"
 #include "sitetwin/final_pcb_board.h"
 #include "sitetwin/gateway_frame.h"
@@ -1210,6 +1211,8 @@ static st_espidf_muxed_data_common_t final_pcb_muxed_data_common[ST_FINAL_PCB_PO
 static st_board_port_manager_t final_pcb_port_manager;
 static st_hotswap_module_binding_t final_pcb_binding;
 static uint64_t final_pcb_last_scan_at_ms;
+static st_espidf_shared_alarm_output_t final_pcb_alarm_output;
+static uint8_t final_pcb_alarm_output_ready;
 /* Temporary diagnostics: logs only on a lifecycle/fault transition per
  * port, so we can see whether a silent port is unclassified, failed its
  * bus cross-check, failed attach, or genuinely attached and just has
@@ -1521,6 +1524,26 @@ static void pod_command_task(void *context)
             }
         }
         st_command_runtime_tick(&pod_command_runtime, now_ms);
+#if SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+        if (final_pcb_alarm_output_ready) {
+            /* No LED/buzzer distinction here -- GPIO19 is one shared
+             * physical output, so there is nothing to compute
+             * separately for each (unlike the two-GPIO profiles' block
+             * just below). A test_output pulse of either kind still
+             * drives the same single output, same as a real alarm
+             * would -- there is no way to test "just the LED" or "just
+             * the buzzer" on this hardware. */
+            uint8_t any_active =
+                st_command_runtime_any_alarm_active(&pod_command_runtime) != 0;
+            uint8_t silenced = pod_command_runtime.alarm.silence_active != 0U;
+            uint8_t desired_active = (any_active && !silenced) ||
+                                     pod_command_runtime.test_output_led_active != 0U ||
+                                     pod_command_runtime.test_output_buzzer_active != 0U;
+
+            (void)st_espidf_shared_alarm_output_tick(&final_pcb_alarm_output, desired_active,
+                                                      now_ms);
+        }
+#endif
         if (pod_local_output_ready) {
             /* Desired state, recomputed every cycle -- the driver's own
              * submit() only actually touches the GPIO/PWM when the value
@@ -1815,11 +1838,27 @@ void app_main(void)
                                              monotonic_now_ms()) == 0
                         ? ESP_OK
                         : ESP_FAIL);
-    /* Shared GPIO19 buzzer/LED actuation for the final PCB is separate,
-     * later work -- pod_local_output_ready deliberately stays 0 here, so
-     * the alarm/command state machine still runs correctly, it just has
-     * no physical indicator to drive yet. */
-    ESP_LOGI(TAG, "Final PCB profile: shared alarm indicator not yet wired, staying silent");
+    /* Shared GPIO19 buzzer/LED actuation for the final PCB. Gated by
+     * CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED (default n)
+     * -- only actually initialised/driven once the electrical
+     * validation this flag represents has been confirmed. Left
+     * uninitialised (final_pcb_alarm_output_ready stays 0) when
+     * disabled; the alarm/command state machine still runs correctly
+     * either way, it just has no physical indicator to drive. */
+#if CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED
+    final_pcb_alarm_output_ready =
+        st_espidf_shared_alarm_output_init(&final_pcb_alarm_output,
+                                           CONFIG_SITETWIN_FINAL_PCB_BUZZER_GPIO,
+                                           CONFIG_SITETWIN_FINAL_PCB_BUZZER_FREQUENCY_HZ) ==
+        ESP_OK;
+    if (!final_pcb_alarm_output_ready) {
+        ESP_LOGW(TAG, "Shared alarm output init failed -- indicator will stay silent");
+    }
+#else
+    ESP_LOGI(TAG,
+             "Final PCB profile: shared alarm output not electrically verified "
+             "(CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED=n), staying silent");
+#endif
 #elif SITETWIN_POD_PROFILE_ACTIVITY_BUILD
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,

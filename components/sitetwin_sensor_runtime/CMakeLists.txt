@@ -4,5 +4,6 @@ idf_component_register(SRCS
                        "src/hotswap_zigbee_slot.c"
                        "src/logical_channel_adapter.c"
                        "src/module_instance.c"
+                       "src/shared_alarm_indicator.c"
                        INCLUDE_DIRS "include"
                        REQUIRES sitetwin_core)
