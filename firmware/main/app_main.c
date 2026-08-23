@@ -1191,6 +1191,17 @@ static esp_err_t pod_sensor_runtime_init(void)
 }
 
 #if SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+#ifdef CONFIG_SITETWIN_FINAL_PCB_I2C_INTERNAL_PULLUPS
+#define ST_FINAL_PCB_I2C_INTERNAL_PULLUPS true
+#else
+#define ST_FINAL_PCB_I2C_INTERNAL_PULLUPS false
+#endif
+#ifdef CONFIG_SITETWIN_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP
+#define ST_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP true
+#else
+#define ST_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP false
+#endif
+
 static st_espidf_final_pcb_board_t final_pcb_board;
 static st_espidf_i2c_master_bus_t final_pcb_i2c_master_bus;
 static st_espidf_shared_i2c_bus_t final_pcb_shared_i2c_bus;
@@ -1229,11 +1240,11 @@ static esp_err_t pod_sensor_runtime_init_final_pcb(void)
         .controller = CONFIG_SITETWIN_FINAL_PCB_I2C_CONTROLLER,
         .sda_gpio = CONFIG_SITETWIN_FINAL_PCB_I2C_SDA_GPIO,
         .scl_gpio = CONFIG_SITETWIN_FINAL_PCB_I2C_SCL_GPIO,
-        .enable_internal_pullups = CONFIG_SITETWIN_FINAL_PCB_I2C_INTERNAL_PULLUPS,
+        .enable_internal_pullups = ST_FINAL_PCB_I2C_INTERNAL_PULLUPS,
     };
     const st_espidf_onewire_bus_config_t onewire_config = {
         .gpio = CONFIG_SITETWIN_FINAL_PCB_DATA_COMMON_GPIO,
-        .enable_internal_pullup = CONFIG_SITETWIN_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP,
+        .enable_internal_pullup = ST_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP,
         .max_rx_bytes = ST_DS18B20_SCRATCHPAD_SIZE,
     };
     st_hotswap_binding_io_t io;
