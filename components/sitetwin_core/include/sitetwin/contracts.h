@@ -11,7 +11,12 @@
 typedef enum {
     ST_POD_ENVIRONMENT = 0,
     ST_POD_ACTIVITY_ACCESS,
-    ST_POD_EQUIPMENT
+    ST_POD_EQUIPMENT,
+    /* Final four-port universal hot-swap PCB: any of the nine supported
+     * module types may be plugged into any port at runtime, so this
+     * profile's capability set is the union of all of them rather than a
+     * fixed subset -- see st_profile_has_capability(). */
+    ST_POD_UNIVERSAL
 } st_pod_profile_t;
 
 typedef enum {

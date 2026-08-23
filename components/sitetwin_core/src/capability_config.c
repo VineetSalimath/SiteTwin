@@ -41,6 +41,11 @@ int st_profile_has_capability(st_pod_profile_t profile, st_sensor_kind_t capabil
         return capability == ST_SENSOR_TEMPERATURE_C ||
                capability == ST_SENSOR_CURRENT_MA || capability == ST_SENSOR_VOLTAGE_V ||
                capability == ST_SENSOR_VIBRATION_RMS_G;
+    case ST_POD_UNIVERSAL:
+        /* Any of the nine hot-swap module types may be attached; every
+         * real sensor kind is a valid capability for this profile except
+         * the UNKNOWN sentinel. */
+        return capability != ST_SENSOR_UNKNOWN;
     default:
         return 0;
     }
