@@ -266,6 +266,22 @@ static int test_test_output_actuation(void)
     EXPECT(activity_runtime.test_output_led_active == 0U);
     EXPECT(activity_runtime.test_output_buzzer_active == 0U);
 
+    /* Final PCB / hot-swap profile: shared_alarm_indicator_verified=1
+     * (bench-verified via the hardware team's own reference firmware on
+     * the assembled board), so the same TEST_OUTPUT/silence_alarm path
+     * as the fixed profiles must also be advertised and accepted here. */
+    {
+        st_command_runtime_t universal_runtime;
+
+        EXPECT(st_command_runtime_init(&universal_runtime, ST_POD_UNIVERSAL, "POD_UNIVERSAL_1",
+                                       (st_command_persistence_t){0}) == 0);
+        EXPECT(universal_runtime.capabilities.shared_alarm_indicator_verified == 1U);
+        EXPECT((universal_runtime.capabilities.target_mask &
+               (1UL << ST_COMMAND_TARGET_LED)) != 0UL);
+        EXPECT((universal_runtime.capabilities.target_mask &
+               (1UL << ST_COMMAND_TARGET_BUZZER)) != 0UL);
+    }
+
     /* Wrong target (not LED/BUZZER) is rejected even on a verified profile. */
     command = make_command(1U, ST_COMMAND_TEST_OUTPUT, ST_COMMAND_TARGET_ALARM);
     command.duration_ms = 1000U;

@@ -214,7 +214,7 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
      * being in target_mask here just means "this RPC shape is valid for
      * this profile," not "this profile's hardware has been verified." */
     if (profile == ST_POD_ACTIVITY_ACCESS || profile == ST_POD_EQUIPMENT ||
-        profile == ST_POD_ENVIRONMENT) {
+        profile == ST_POD_ENVIRONMENT || profile == ST_POD_UNIVERSAL) {
         capabilities.target_mask |= (1UL << ST_COMMAND_TARGET_LED) |
                                     (1UL << ST_COMMAND_TARGET_BUZZER);
     }
@@ -237,13 +237,21 @@ st_pod_capabilities_t st_pod_capabilities(st_pod_profile_t profile)
      * test_output exercise the same already-verified physical GPIO/PWM
      * path as trigger (not new electrical behaviour) -- flipped on that
      * basis, same reasoning as Equipment. Worth confirming those three
-     * directly on this Pod too as a follow-up. */
+     * directly on this Pod too as a follow-up.
+     * Final PCB / hot-swap Pod (ST_POD_UNIVERSAL): GPIO19's shared
+     * buzzer/LED branch bench-verified by the hardware team's own
+     * reference firmware on the assembled board (both LED and buzzer
+     * confirmed physically working on real hardware); the ESP-IDF driver
+     * side (st_espidf_shared_alarm_output_t) additionally requires
+     * CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED to be
+     * explicitly enabled at build time before it is actually initialised
+     * -- this capability flag alone does not drive any GPIO. */
     capabilities.shared_alarm_indicator_verified =
         (profile == ST_POD_ACTIVITY_ACCESS || profile == ST_POD_EQUIPMENT ||
-         profile == ST_POD_ENVIRONMENT) ? 1U : 0U;
+         profile == ST_POD_ENVIRONMENT || profile == ST_POD_UNIVERSAL) ? 1U : 0U;
     capabilities.pending_hardware_verification =
         (profile == ST_POD_ACTIVITY_ACCESS || profile == ST_POD_EQUIPMENT ||
-         profile == ST_POD_ENVIRONMENT) ? 0U : 1U;
+         profile == ST_POD_ENVIRONMENT || profile == ST_POD_UNIVERSAL) ? 0U : 1U;
     return capabilities;
 }
 
