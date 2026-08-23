@@ -25,6 +25,7 @@ int st_run_gateway_identity_tests(void);
 int st_run_alarm_control_tests(void);
 int st_run_gateway_state_tests(void);
 int st_run_final_pcb_board_tests(void);
+int st_run_board_port_manager_tests(void);
 
 #define EXPECT(condition)                                                                        \
     do {                                                                                         \
@@ -714,6 +715,7 @@ int main(void)
     failures += st_run_alarm_control_tests();
     failures += st_run_gateway_state_tests();
     failures += st_run_final_pcb_board_tests();
+    failures += st_run_board_port_manager_tests();
     failures += test_stress_runtime_and_gateway();
 
     if (failures != 0) {
