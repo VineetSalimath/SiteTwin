@@ -12,7 +12,9 @@
 #define ST_HOTSWAP_SCD41_POLL_INTERVAL_MS 5000U
 #define ST_HOTSWAP_SGP40_ALGORITHM_INTERVAL_MS 1000U
 #define ST_HOTSWAP_SGP40_COMPENSATION_MAX_AGE_MS 5000U
-#define ST_HOTSWAP_ADXL345_MINIMUM_WINDOW_SAMPLES 32U
+/* st_adxl345_init() rejects minimum_window_samples > 31 (checked --
+ * strictly less than the 32-entry FIFO capacity, not equal to it). */
+#define ST_HOTSWAP_ADXL345_MINIMUM_WINDOW_SAMPLES 31U
 /* Matches the driver's own documented ceiling: max current = 0.320 V /
  * shunt_ohms (see ina219.h). 0.1 ohm is the common breakout shunt value. */
 #define ST_HOTSWAP_INA219_SHUNT_OHMS 0.1F
@@ -69,6 +71,18 @@ static void slot_registry_base(size_t port_index, uint8_t out_slots[ST_MODULE_MA
     for (i = 0U; i < ST_MODULE_MAX_CHANNELS; ++i) {
         out_slots[i] = (uint8_t)(base + i);
     }
+}
+
+/* st_sgp40_init() hard-rejects a NULL compensation_provider (see
+ * attach_sgp40 below) -- this stub is the "always unavailable" provider
+ * a hot-swap SGP40 uses until cross-port compensation sourcing exists. */
+static int final_pcb_no_compensation_available(void *context, uint64_t now_ms,
+                                               st_sgp40_compensation_t *compensation)
+{
+    (void)context;
+    (void)now_ms;
+    (void)compensation;
+    return -1;
 }
 
 static int attach_sht41(st_hotswap_port_slot_t *slot, const st_hotswap_binding_io_t *io,
@@ -132,9 +146,14 @@ static int attach_sgp40(st_hotswap_port_slot_t *slot, const st_hotswap_binding_i
     config.compensation_maximum_age_ms = ST_HOTSWAP_SGP40_COMPENSATION_MAX_AGE_MS;
     /* No cross-port humidity/temperature compensation source is wired up
      * yet: a hot-swap SGP40 does not know whether some other port
-     * happens to hold a live SHT41 right now. Runs uncompensated (still
-     * a valid, if less accurate, VOC index) until that is added. */
-    config.compensation_provider = NULL;
+     * happens to hold a live SHT41 right now. st_sgp40_init() itself
+     * rejects a NULL compensation_provider (checked -- it is a hard
+     * validation failure, not merely unused), so this always-fails stub
+     * is required, not optional decoration: the driver already handles a
+     * failing provider gracefully (ST_SGP40_COMPENSATION_UNAVAILABLE --
+     * still reports, tagged with ST_QUALITY_COMPENSATION_UNAVAILABLE),
+     * which is the actual "runs uncompensated" behaviour. */
+    config.compensation_provider = final_pcb_no_compensation_available;
     config.compensation_context = NULL;
     config.voc_index_sensor_id = kSgp40VocId;
 
