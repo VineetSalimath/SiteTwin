@@ -207,6 +207,32 @@ not watching the serial console.
   commingled with `POD_1FBA`'s prior history in any downstream
   history/dashboard. A clean `erase-flash` re-commission would give the
   hot-swap pod its own distinct identity if that separation matters.
+  **Update:** an accidental gateway-wifi flash later overwrote this
+  unit's zb_storage/zb_fct NVS, forcing exactly that re-commission --
+  it now runs as `POD_3C60`, whitelisted in both `gateway_identity.c`'s
+  `pod_identity_table` (uplink/downlink Zigbee routing) and hardcoded
+  as the pod's own local `pod_id` string in `app_main.c` (used only in
+  command-ack replies, not telemetry -- see "A hardcoded local pod_id
+  string is fragile" below for why these two independent places both
+  needed updating).
+- **A hardcoded local `pod_id` string is fragile.** `pod_runtime` and
+  `pod_command_runtime` are both initialised with a literal `pod_id`
+  string compiled into the pod's own firmware (`"POD_3C60"` for this
+  unit). Telemetry never uses this string -- the gateway reconstructs
+  `pod_id` purely from the Zigbee source address via
+  `gateway_identity.c`, and the wire payload doesn't carry a pod_id
+  field at all -- but **command acks do embed it directly**
+  (`pod_send_command_ack`), and bridge_core.py correlates a pending RPC
+  request against an incoming ack's `pod_id`. If this local string and
+  the gateway's `pod_identity_table` entry for the pod's real short
+  address ever disagree (exactly what happened here after a
+  re-commission), RPC downlink commands appear to succeed at the
+  Zigbee layer but the reply comes back `uncorrelated` and the original
+  TB-side request simply times out. This is not new to hot-swap --
+  the three fixed pod profiles hardcode the same way -- but it is worth
+  someone deciding whether to keep matching these two places by hand on
+  every re-commission, or derive the local string from the pod's own
+  joined short address at runtime instead.
 - **Port transition logging now does double duty.** `app_main.c`'s
   `pod_telemetry_task` (final_pcb branch) logs a line on every port
   lifecycle/fault-reason transition -- originally added purely to debug

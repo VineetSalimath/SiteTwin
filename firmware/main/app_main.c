@@ -1265,7 +1265,7 @@ static esp_err_t pod_sensor_runtime_init_final_pcb(void)
     esp_err_t result;
     size_t port_index;
 
-    st_pod_runtime_init(&pod_runtime, ST_POD_UNIVERSAL, "POD_UNIVERSAL_1", 4U);
+    st_pod_runtime_init(&pod_runtime, ST_POD_UNIVERSAL, "POD_3C60", 4U);
 
     result = st_espidf_final_pcb_board_init(&final_pcb_board);
     if (result != ESP_OK) {
@@ -1832,7 +1832,7 @@ void app_main(void)
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,
                                              ST_POD_UNIVERSAL,
-                                             "POD_UNIVERSAL_1",
+                                             "POD_3C60",
                                              st_espidf_pod_command_persistence(),
                                              pod_runtime.registry.boot_id,
                                              monotonic_now_ms()) == 0
