@@ -6,4 +6,10 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ZB_ENABLED=y
 CONFIG_SITETWIN_FINAL_PCB_PROFILE=y
 CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY_UNKNOWN=y
-# CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED is not set
+# CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED: functionally
+# verified on the assembled final PCB (GPIO19's 2s-on/1s-off blink
+# pattern observed working correctly for both LED and buzzer, matching
+# the hardware team's own reference firmware) -- not a claim that full
+# electrical characterisation (sustained current draw, thermal behaviour
+# over time, etc.) has been performed.
+CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED=y
