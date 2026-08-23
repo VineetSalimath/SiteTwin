@@ -73,16 +73,25 @@ static void slot_registry_base(size_t port_index, uint8_t out_slots[ST_MODULE_MA
     }
 }
 
-/* st_sgp40_init() hard-rejects a NULL compensation_provider (see
- * attach_sgp40 below) -- this stub is the "always unavailable" provider
- * a hot-swap SGP40 uses until cross-port compensation sourcing exists. */
-static int final_pcb_no_compensation_available(void *context, uint64_t now_ms,
-                                               st_sgp40_compensation_t *compensation)
+/* st_sgp40_init() hard-rejects a NULL compensation_provider. A provider
+ * that always FAILS is not the right stand-in either: start_measurement()
+ * only ever issues the real I2C measurement command when the provider
+ * succeeds -- a permanently-failing provider means has_last_valid never
+ * becomes true and the driver retries forever without ever measuring
+ * anything (confirmed against sgp40_acquire()'s dispatch; the graceful
+ * COMPENSATION_UNAVAILABLE stale-data fallback only helps once at least
+ * one real measurement has already succeeded). Until cross-port
+ * compensation sourcing exists, a hot-swap SGP40 uses fixed default
+ * ambient values (25C / 50% RH) so real measurements actually happen --
+ * less accurate than true SHT41 compensation, but a real reading. */
+static int final_pcb_default_compensation(void *context, uint64_t now_ms,
+                                          st_sgp40_compensation_t *compensation)
 {
     (void)context;
-    (void)now_ms;
-    (void)compensation;
-    return -1;
+    compensation->temperature_c = 25.0F;
+    compensation->humidity_percent = 50.0F;
+    compensation->acquired_at_ms = now_ms;
+    return 0;
 }
 
 static int attach_sht41(st_hotswap_port_slot_t *slot, const st_hotswap_binding_io_t *io,
@@ -146,14 +155,12 @@ static int attach_sgp40(st_hotswap_port_slot_t *slot, const st_hotswap_binding_i
     config.compensation_maximum_age_ms = ST_HOTSWAP_SGP40_COMPENSATION_MAX_AGE_MS;
     /* No cross-port humidity/temperature compensation source is wired up
      * yet: a hot-swap SGP40 does not know whether some other port
-     * happens to hold a live SHT41 right now. st_sgp40_init() itself
-     * rejects a NULL compensation_provider (checked -- it is a hard
-     * validation failure, not merely unused), so this always-fails stub
-     * is required, not optional decoration: the driver already handles a
-     * failing provider gracefully (ST_SGP40_COMPENSATION_UNAVAILABLE --
-     * still reports, tagged with ST_QUALITY_COMPENSATION_UNAVAILABLE),
-     * which is the actual "runs uncompensated" behaviour. */
-    config.compensation_provider = final_pcb_no_compensation_available;
+     * happens to hold a live SHT41 right now. Uses fixed default ambient
+     * values so real measurements still happen -- see
+     * final_pcb_default_compensation's comment for why a permanently
+     * failing provider does not work (the driver would retry forever
+     * and never measure anything at all). */
+    config.compensation_provider = final_pcb_default_compensation;
     config.compensation_context = NULL;
     config.voc_index_sensor_id = kSgp40VocId;
 
