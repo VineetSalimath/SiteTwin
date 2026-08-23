@@ -7,19 +7,39 @@
 
 #include "sitetwin/sensor_hal.h"
 
-#define ST_MODULE_ID_DATA_MAX 16U
-
 /*
- * Board-intent boundary only: I1 does not provide an implementation of these
- * operations. The final board contract uses four universal ports, a
- * CD74HC4052M96 DATA mux, and DATA_COMMON on ESP32-C6 GPIO3. Identification,
- * mux selection, insertion/removal handling, and hot-swap sequencing remain
- * feature-gated until their electrical validation is complete.
+ * Physical module identity reported by a board-port implementation. A
+ * provisional match is useful for development diagnostics, but it is not a
+ * calibrated final-PCB classification claim.
  */
+typedef enum {
+    ST_MODULE_TYPE_UNKNOWN = 0,
+    ST_MODULE_TYPE_EMPTY,
+    ST_MODULE_TYPE_SHT41,
+    ST_MODULE_TYPE_SCD41,
+    ST_MODULE_TYPE_PIR,
+    ST_MODULE_TYPE_SGP40,
+    ST_MODULE_TYPE_DS18B20,
+    ST_MODULE_TYPE_BH1750,
+    ST_MODULE_TYPE_REED,
+    ST_MODULE_TYPE_ADXL345,
+    ST_MODULE_TYPE_INA219
+} st_module_type_t;
+
+typedef enum {
+    ST_MODULE_ID_UNCLASSIFIED = 0,
+    ST_MODULE_ID_PROVISIONAL_MATCH,
+    ST_MODULE_ID_EMPTY,
+    ST_MODULE_ID_MEASUREMENT_ERROR
+} st_module_id_status_t;
 
 typedef struct {
-    uint8_t data[ST_MODULE_ID_DATA_MAX];
-    uint8_t length;
+    st_module_id_status_t status;
+    st_module_type_t module_type;
+    uint16_t raw_adc;
+    uint16_t millivolts;
+    uint8_t sample_count;
+    bool voltage_calibrated;
 } st_module_identity_t;
 
 typedef struct {

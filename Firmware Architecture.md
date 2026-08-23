@@ -28,12 +28,14 @@ ESP32-C6 GPIO3. GPIO19 drives one shared buzzer/LED low-side branch; LED and
 buzzer are not independent capabilities. Pod 3 remains monitoring/inference
 only: no firmware may cut or control the motor.
 
-The current pod profiles are fixed development compositions. They do not
-implement final-board module identification, DATA-mux selection, physical
-hot-swap, or live shared-indicator control. Those paths remain feature-gated
-until the required electrical evidence is reviewed. In particular, the
-verified Pod 3 DS18B20-on-GPIO0 prototype must not be mistaken for the final
-universal-board DATA route.
+The current pod profiles remain fixed development compositions. A
+disabled-by-default final-PCB profile and H2 board-port layer now define the
+four-port U2/U4 mapping, take median raw/calibrated ID measurements, and return
+provisional or unclassified identities. They are not composed into the pod
+runtime and do not implement interrupts, stable-scan registry commit, dynamic
+attach/detach, or live shared-indicator control. In particular, the verified
+Pod 3 DS18B20-on-GPIO0 prototype must not be mistaken for the final universal
+board DATA route.
 
 ## Implemented Portable Core
 

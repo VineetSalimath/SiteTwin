@@ -99,11 +99,14 @@ GPIO19 drives one shared buzzer/LED low-side alarm branch; it is not two
 independently controllable outputs. The firmware must never cut or control the
 motor.
 
-This branch does not implement the universal-port scanner, physical hot-swap,
-DATA-mux selection, or the shared alarm indicator. Those final-board paths stay
-feature-gated until the remaining electrical evidence is validated. The Pod 3
-DS18B20 GPIO0/4.7 kOhm wiring below is a verified development prototype and
-must not be treated as the final universal-board route.
+The disabled-by-default H1/H2 final-PCB profile defines the four-port pin map,
+implements ID/DATA mux selection, and exposes a safe median ID measurement
+through `st_board_port_ops_t`. Its midpoint bands are provisional. The fixed
+pod images do not compose it, and physical wake handling, stable registry
+attach/detach, DATA_COMMON acquisition, and the shared alarm indicator remain
+feature-gated. The Pod 3 DS18B20 GPIO0/4.7 kOhm wiring below is a verified
+development prototype and must not be treated as the final universal-board
+route.
 
 ## Firmware boundary
 

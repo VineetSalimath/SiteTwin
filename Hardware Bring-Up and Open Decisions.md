@@ -2,7 +2,7 @@
 title: Hardware Bring-Up and Open Decisions
 project: SiteTwin
 status: Active hardware integration
-updated: 2026-08-14
+updated: 2026-08-17
 tags:
   - sitetwin
   - hardware
@@ -44,10 +44,13 @@ The portable drivers, logical-channel adapters, module lifecycle, registry,
 reporting policy, queues, Zigbee codec, and gateway framing remain reusable.
 The current I1 profiles compose fixed development sensors only.
 
-No universal-port scanner, physical insertion/removal handler, ID classifier,
-DATA-mux controller, or live shared-alarm-indicator driver is enabled. Those
-paths remain feature-gated. The portable `board_port` and `local_output`
-interfaces describe boundaries only; they do not prove electrical behavior.
+The disabled-by-default H1/H2 profile now implements the confirmed U2/U4 select
+mapping and a board-port raw ID measurement with a provisional midpoint
+classifier. It always disables the temporary ID pull-up after successful or
+failed acquisition. It is not composed into the fixed pod profiles. No
+physical insertion/removal handler, stable-scan registry commit, DATA_COMMON
+sensor acquisition, or live shared-alarm-indicator driver is enabled. The
+`board_port` and `local_output` boundaries do not prove electrical behavior.
 
 ## Remaining hardware evidence required
 

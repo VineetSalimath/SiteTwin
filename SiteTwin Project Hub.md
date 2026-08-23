@@ -90,7 +90,8 @@ For a step-by-step explanation of how these pieces call each other, see [[SiteTw
 Not yet implemented or hardware-validated:
 
 - controlled vibration threshold characterization
-- ADC/module-identification, CD74HC4052M96 DATA-mux, and power-management adapters for the final universal-port hardware
+- assembled-PCB calibration and H3 composition of the implemented H1/H2
+  ADC/module-identification and CD74HC4052M96 mux board-port layer
 - live GPIO19 shared buzzer/LED control, pending electrical validation
 - physical validation of C1 NVS migration and control-event publication
 - ThingsBoard dashboard/rule-chain validation for the C1 projections
@@ -110,7 +111,8 @@ Not yet implemented or hardware-validated:
 - collect a report-ready multi-condition vibration dataset for Pod 3
 - collect controlled idle/normal/induced ADXL345 datasets before selecting a threshold
 - characterize ADC behavior, resistor-ID tolerances, sensor noise, warm-up time, current draw, and useful sampling cadence on real hardware
-- validate the locked universal-port ID, power, mux, hot-swap, and shared-indicator electrical behavior before implementing it
+- validate the locked universal-port ID, mux, hot-swap, and shared-indicator
+  electrical behavior before enabling or composing the H1/H2 layer
 - add gateway MQTT batching and simulated Wi-Fi outage recovery
 - design commissioning, allow-listing, and sensor-slot registration messages
 - validate gateway reliability through the tests listed in [[Validation and Implementation Plan]]
