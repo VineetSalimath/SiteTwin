@@ -26,6 +26,13 @@ static const st_gateway_pod_identity_t pod_identity_table[] = {
     {0x67C3U, "POD_67C3"},
     {0x6647U, "POD_6647"},
     {0x1FBAU, "POD_1FBA"},
+    /* POD_3C60: the final-PCB hot-swap dev unit re-commissioned under a new
+     * short address after an accidental gateway-wifi firmware flash
+     * overwrote its zb_storage/zb_fct NVS partitions (that image's factory
+     * partition spans 0x10000-0x210000, covering the Pod image's
+     * zb_storage/zb_fct region at 0x10b000/0x10f000) -- exactly the
+     * maintenance case the comment above already warned about. */
+    {0x3C60U, "POD_3C60"},
 };
 
 static const st_gateway_sensor_identity_t sensor_identity_table[] = {
