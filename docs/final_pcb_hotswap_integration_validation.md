@@ -8,7 +8,7 @@ out of scope -- see "Explicitly not done" below.
 
 Software base: `feature/dynamic-pod-downlink-routing` merged with
 `feature/final-pcb-hotswap` at `810eeff`, then built on directly. Final
-commit referenced by this document: `5694d9a`.
+commit referenced by this document: `9e938d3`.
 
 ## Scope
 
@@ -115,6 +115,74 @@ and/or real hardware.
    affected that profile's VOC readings too. Worth a note to whoever
    owns that profile's own validation record.**
 
+## Port health/status events reaching TB
+
+Motivated by a direct comparison against the hardware team's own test
+`.ino`, which prints insertion/removal/error events over serial: the
+firmware-side detection already existed (`board_port_manager`'s
+`lifecycle`/`fault_reason` state) but had no path out of the pod beyond a
+local, serial-only diagnostic log. This closes that gap end-to-end.
+
+**Design.** New `st_pod_runtime_emit_health()` (`pod_runtime.c/.h`),
+parallel to `emit_event()` but bypassing its `sensor_kind`-based
+auto-classification to construct an `ST_RECORD_HEALTH`/
+`ST_PRIORITY_HEALTH` record directly. `sensor_kind = ST_SENSOR_UNKNOWN`
+and `unit = ST_UNIT_NONE` mark it as a status event rather than a real
+reading. `app_main.c`'s existing port-transition diagnostic block now
+also calls this on every lifecycle/fault-reason change, one call per
+physical port, `sensor_id` = `"port0_status"`..`"port3_status"`. `value`
+is encoded as `lifecycle*10 + fault_reason` (`fault_reason` is always
+< 10, so this is unambiguous); documented inline at the call site.
+
+**Layers touched, and what did *not* need to change.** Investigated all
+four layers before implementing:
+- Both gateway boards (`firmware/` coordinator, `gateway-wifi/`)
+  **needed zero code changes** -- both already route
+  `ST_GATEWAY_MESSAGE_HEALTH` through the exact same decode/publish path
+  as ordinary telemetry; this was already built, just never fed by any
+  pod before now.
+- `gateway_identity.c` **did** need 4 new rows (correcting an earlier,
+  wrong assumption): `sensor_id` is never transmitted over Zigbee at
+  all -- the wire payload has no such field -- it is reconstructed
+  purely from `(sensor_slot, sensor_kind)` via this table. Since every
+  hot-swap health event necessarily shares `sensor_kind = UNKNOWN`,
+  `sensor_slot` is the only field that can distinguish which port an
+  event came from, so one row per port was required (slots 10-13,
+  `"port0_status"`..`"port3_status"`). Purely additive; the existing 11
+  rows are untouched. `hotswap_zigbee_slot.c`'s pod-side table extended
+  to match, verified with a real round-trip through the actual
+  `gateway_identity_resolve()`.
+- `pi-bridge/bridge_core.py`'s `telemetry_projection()` **did** need a
+  fix: it previously collapsed every health record to a bare
+  `{sensor_id}_heartbeat: True`, discarding `payload['value']` entirely
+  -- fine for a liveness ping, useless for a status/fault code. Now
+  preserves the real value under `{sensor_id}_status` (heartbeat kept
+  alongside, additive). This path had zero existing test coverage;
+  added `test_health_record_preserves_value_not_just_heartbeat`.
+
+**Real-hardware validation.** Both gateway boards were rebuilt and
+reflashed with the updated `gateway_identity.c` (this had been missed
+in the first pass -- a stale coordinator/Wi-Fi-gateway pair initially
+produced `"unknown_slot_10"`-style fallback sensor_ids on HiveMQ,
+confirming the table lookup was failing exactly as expected against the
+*old* firmware, and confirming the *new* table's slot numbers were
+correct once decoded from the fallback string). After reflashing both
+boards, a live SHT41 insertion produced, in TB:
+
+```
+port0_status_status         72.0
+port0_status_heartbeat      true
+port0_status_status_sequence  2
+```
+
+`72.0` decodes as `lifecycle=7` (`FAULTED`), `fault_reason=2`
+(`BUS_MISMATCH`) -- a real fault event, not a synthetic test value,
+caught and correctly reported end-to-end. Whether that specific
+occurrence reflected a genuine loose connection or a one-off is not
+established here; what is established is that the reporting pipeline
+faithfully reflects the firmware's real-time state to someone who is
+not watching the serial console.
+
 ## Explicitly not done
 
 - **GPIO19 shared buzzer/LED actuation.** Not touched. The final PCB's
@@ -139,12 +207,14 @@ and/or real hardware.
   commingled with `POD_1FBA`'s prior history in any downstream
   history/dashboard. A clean `erase-flash` re-commission would give the
   hot-swap pod its own distinct identity if that separation matters.
-- **Temporary diagnostic logging.** `app_main.c`'s `pod_telemetry_task`
-  (final_pcb branch) currently logs a line on every port
-  lifecycle/fault-reason transition, added specifically to debug the
-  SGP40 issue above. Left in place at the user's request; harmless
-  (low-volume, transition-triggered only) but was written as a temporary
-  aid and can be removed once the path is fully trusted.
+- **Port transition logging now does double duty.** `app_main.c`'s
+  `pod_telemetry_task` (final_pcb branch) logs a line on every port
+  lifecycle/fault-reason transition -- originally added purely to debug
+  the SGP40 issue above, it is no longer purely diagnostic: the same
+  transition check now also drives `emit_health()` (see "Port
+  health/status events reaching TB"). The `ESP_LOGI` call itself is
+  still safe to remove independently if the serial output is no longer
+  wanted; the `emit_health()` call must stay.
 - **Dead code in a final_pcb build.** Several `#if ACTIVITY_BUILD /
   #elif EQUIPMENT_BUILD / #else` chains elsewhere in `app_main.c` were
   not given an explicit `final_pcb` branch, so a final_pcb build also
