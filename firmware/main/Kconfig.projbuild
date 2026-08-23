@@ -178,6 +178,53 @@ config SITETWIN_FINAL_PCB_ADC_FALLBACK_RAW_MAX
     default 4095
     depends on SITETWIN_FINAL_PCB_PROFILE
 
+config SITETWIN_FINAL_PCB_I2C_CONTROLLER
+    int "Shared I2C controller"
+    range 0 1
+    default 0
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_I2C_CLOCK_HZ
+    int "Shared I2C clock frequency"
+    range 10000 1000000
+    default 100000
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_I2C_TIMEOUT_MS
+    int "Shared I2C transaction timeout"
+    range 10 5000
+    default 100
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_I2C_INTERNAL_PULLUPS
+    bool "Enable ESP32-C6 internal shared I2C pull-ups"
+    default n
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP
+    bool "Enable ESP32-C6 internal DATA_COMMON pull-up"
+    default n
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Applies to the shared OneWire/digital line used by DS18B20, PIR, and
+        REED modules through the DATA mux.
+
+config SITETWIN_FINAL_PCB_STABLE_SCAN_COUNT
+    int "Consecutive matching port scans required before attach/detach/fault"
+    range 2 10
+    default 2
+    depends on SITETWIN_FINAL_PCB_PROFILE
+
+config SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS
+    int "Port identification scan interval (milliseconds)"
+    range 10 10000
+    default 200
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        How often the telemetry task re-scans all four ports for
+        insertion/removal/type changes. Independent of each attached
+        sensor's own sample_interval_ms.
+
 endmenu
 
 config SITETWIN_SHT41_ENABLED

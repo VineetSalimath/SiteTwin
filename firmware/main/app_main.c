@@ -17,17 +17,25 @@
 
 #include "sitetwin/adxl345.h"
 #include "sitetwin/bh1750.h"
+#include "sitetwin/board_port.h"
+#include "sitetwin/board_port_manager.h"
 #include "sitetwin/command.h"
 #include "sitetwin/control_event.h"
 #include "sitetwin/contracts.h"
 #include "sitetwin/ds18b20.h"
 #include "sitetwin/espidf_actuation.h"
+#include "sitetwin/espidf_final_pcb_board.h"
 #include "sitetwin/espidf_i2c_bus.h"
+#include "sitetwin/espidf_muxed_data_common.h"
 #include "sitetwin/espidf_onewire_bus.h"
+#include "sitetwin/espidf_shared_i2c_bus.h"
+#include "sitetwin/final_pcb_board.h"
 #include "sitetwin/gateway_frame.h"
 #include "sitetwin/gateway_identity.h"
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/gateway_state.h"
+#include "sitetwin/hotswap_module_binding.h"
+#include "sitetwin/hotswap_zigbee_slot.h"
 #include "sitetwin/ina219.h"
 #include "sitetwin/module_instance.h"
 #include "sitetwin/pir.h"
@@ -1182,9 +1190,144 @@ static esp_err_t pod_sensor_runtime_init(void)
 #endif
 }
 
+#if SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+static st_espidf_final_pcb_board_t final_pcb_board;
+static st_espidf_i2c_master_bus_t final_pcb_i2c_master_bus;
+static st_espidf_shared_i2c_bus_t final_pcb_shared_i2c_bus;
+static st_espidf_onewire_bus_t final_pcb_onewire_bus;
+static st_espidf_muxed_data_common_t final_pcb_muxed_data_common[ST_FINAL_PCB_PORT_COUNT];
+static st_board_port_manager_t final_pcb_port_manager;
+static st_hotswap_module_binding_t final_pcb_binding;
+static uint64_t final_pcb_last_scan_at_ms;
+
+static st_onewire_bus_t final_pcb_data_common_bus_for_port(void *context, size_t port_index)
+{
+    st_espidf_muxed_data_common_t *muxed = (st_espidf_muxed_data_common_t *)context;
+
+    return st_espidf_muxed_onewire_bus(&muxed[port_index]);
+}
+
+/*
+ * Mirrors pod_sensor_runtime_init()'s job for the three fixed profiles,
+ * but composes the hot-swap stack instead: final_pcb_board (Satvik's
+ * mux/ADC identification layer) -> board_port_manager (debounce/stable
+ * commit/bus cross-check) -> hotswap_module_binding (type -> driver
+ * mapping, registry attach or PIR/REED event state). Nothing here
+ * decides *when* to attach anything -- that is entirely
+ * board_port_manager's job, driven by pod_telemetry_task calling
+ * st_board_port_manager_poll() on every tick.
+ *
+ * Deliberately does not touch pod_local_output/GPIO19 -- the shared
+ * buzzer/LED actuation rework for the final PCB is separate, later work
+ * (see the project notes); pod_local_output_ready simply stays 0 for
+ * this profile for now, so the alarm/command state machine still runs
+ * correctly, it just has no physical LED/buzzer to drive yet.
+ */
+static esp_err_t pod_sensor_runtime_init_final_pcb(void)
+{
+    const st_espidf_i2c_master_bus_config_t bus_config = {
+        .controller = CONFIG_SITETWIN_FINAL_PCB_I2C_CONTROLLER,
+        .sda_gpio = CONFIG_SITETWIN_FINAL_PCB_I2C_SDA_GPIO,
+        .scl_gpio = CONFIG_SITETWIN_FINAL_PCB_I2C_SCL_GPIO,
+        .enable_internal_pullups = CONFIG_SITETWIN_FINAL_PCB_I2C_INTERNAL_PULLUPS,
+    };
+    const st_espidf_onewire_bus_config_t onewire_config = {
+        .gpio = CONFIG_SITETWIN_FINAL_PCB_DATA_COMMON_GPIO,
+        .enable_internal_pullup = CONFIG_SITETWIN_FINAL_PCB_DATA_COMMON_INTERNAL_PULLUP,
+        .max_rx_bytes = ST_DS18B20_SCRATCHPAD_SIZE,
+    };
+    st_hotswap_binding_io_t io;
+    st_board_port_manager_callbacks_t callbacks;
+    st_board_port_manager_config_t manager_config;
+    const st_board_port_ops_t *port_ops;
+    esp_err_t result;
+    size_t port_index;
+
+    st_pod_runtime_init(&pod_runtime, ST_POD_UNIVERSAL, "POD_UNIVERSAL_1", 4U);
+
+    result = st_espidf_final_pcb_board_init(&final_pcb_board);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Final PCB board-port init failed: %d", (int)result);
+        return result;
+    }
+    port_ops = st_espidf_final_pcb_board_ops(&final_pcb_board);
+    if (port_ops == NULL) {
+        return ESP_FAIL;
+    }
+
+    result = st_espidf_i2c_master_bus_init(&final_pcb_i2c_master_bus, &bus_config);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Final PCB shared I2C master bus init failed: %d", (int)result);
+        return result;
+    }
+    if (st_espidf_shared_i2c_bus_init(&final_pcb_shared_i2c_bus, &final_pcb_i2c_master_bus,
+                                      CONFIG_SITETWIN_FINAL_PCB_I2C_CLOCK_HZ,
+                                      CONFIG_SITETWIN_FINAL_PCB_I2C_TIMEOUT_MS) != ESP_OK) {
+        st_espidf_i2c_master_bus_deinit(&final_pcb_i2c_master_bus);
+        return ESP_FAIL;
+    }
+
+    result = st_espidf_onewire_bus_init(&final_pcb_onewire_bus, &onewire_config);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Final PCB DATA_COMMON OneWire init failed: %d", (int)result);
+        return result;
+    }
+    for (port_index = 0U; port_index < ST_FINAL_PCB_PORT_COUNT; ++port_index) {
+        if (st_espidf_muxed_data_common_init(&final_pcb_muxed_data_common[port_index], port_ops,
+                                             st_espidf_onewire_bus(&final_pcb_onewire_bus),
+                                             CONFIG_SITETWIN_FINAL_PCB_DATA_COMMON_GPIO,
+                                             port_index) != ESP_OK) {
+            return ESP_FAIL;
+        }
+    }
+
+    memset(&io, 0, sizeof(io));
+    io.i2c_bus = st_espidf_shared_i2c_bus(&final_pcb_shared_i2c_bus);
+    io.i2c_probe = st_espidf_shared_i2c_probe;
+    io.i2c_probe_context = &final_pcb_shared_i2c_bus;
+    io.data_common_bus_for_port = final_pcb_data_common_bus_for_port;
+    io.data_common_context = final_pcb_muxed_data_common;
+    if (st_hotswap_module_binding_init(&final_pcb_binding, &io, &pod_runtime.registry,
+                                       ST_FINAL_PCB_PORT_COUNT) != 0) {
+        return ESP_FAIL;
+    }
+
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.context = &final_pcb_binding;
+    callbacks.attach = st_hotswap_module_binding_attach;
+    callbacks.detach = st_hotswap_module_binding_detach;
+    callbacks.module_uses_bus_probe = st_hotswap_module_binding_uses_bus_probe;
+    callbacks.bus_probe = st_hotswap_module_binding_bus_probe;
+    manager_config.stable_scan_count = CONFIG_SITETWIN_FINAL_PCB_STABLE_SCAN_COUNT;
+    if (st_board_port_manager_init(&final_pcb_port_manager, port_ops, &callbacks,
+                                   &manager_config) != 0) {
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Final PCB hot-swap runtime ready (%u ports, GPIO18 pull-up gate re-armed)",
+             (unsigned int)ST_FINAL_PCB_PORT_COUNT);
+    return ESP_OK;
+}
+#endif
+
 static uint8_t pod_sensor_slot(const st_telemetry_record_t *record)
 {
-#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+#if SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+    uint8_t slot = 0U;
+
+    /* Slot is chosen by sensor_id, not sensor_kind, because a hot-swap
+     * port's type is not known at compile time and because two of our
+     * nine module types (SHT41, DS18B20) share ST_SENSOR_TEMPERATURE_C --
+     * see hotswap_zigbee_slot.h for why this reuses the exact slot
+     * numbers gateway_identity.c's existing table already associates
+     * with each sensor_id, requiring no changes to that shared table. */
+    if (st_hotswap_zigbee_sensor_slot(record->reading.sensor_id, &slot) != 0) {
+        ESP_LOGW(TAG, "No known Zigbee slot for sensor_id '%s'; gateway will label it unknown",
+                 record->reading.sensor_id);
+        return 0U;
+    }
+    return slot;
+#elif SITETWIN_POD_PROFILE_ACTIVITY_BUILD
     switch (record->reading.sensor_kind) {
     case ST_SENSOR_MOTION:
         return 1U;
@@ -1438,6 +1581,66 @@ static void pod_telemetry_task(void *context)
                              event.sensor_id);
                 }
             }
+#elif SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+            /* Re-scan all four ports for insertion/removal/type changes
+             * on its own cadence -- independent of this task's 50ms
+             * tick and of each attached sensor's own sample_interval_ms.
+             * Attach/detach (and therefore registry membership) happens
+             * entirely inside this call via board_port_manager's
+             * callbacks into hotswap_module_binding. */
+            if (now_ms - final_pcb_last_scan_at_ms >= CONFIG_SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS) {
+                final_pcb_last_scan_at_ms = now_ms;
+                st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
+            }
+            /* PIR/REED are event-driven and deliberately outside the
+             * registry (see hotswap_module_binding.h) -- service
+             * whichever ports currently hold one every tick, same
+             * cadence the fixed Activity profile already polls its own
+             * PIR/reed at. */
+            {
+                size_t port_index;
+
+                for (port_index = 0U; port_index < ST_FINAL_PCB_PORT_COUNT; ++port_index) {
+                    st_pir_t *pir = NULL;
+                    st_reed_debounce_t *reed = NULL;
+                    const char *sensor_id = NULL;
+                    uint8_t raw_level;
+
+                    if (st_hotswap_binding_get_pir(&final_pcb_binding, port_index, &pir,
+                                                   &sensor_id) == 1) {
+                        st_pir_event_t pir_event;
+
+                        if (st_espidf_muxed_data_common_read_level(
+                                &final_pcb_muxed_data_common[port_index], &raw_level) ==
+                                ST_HAL_OK &&
+                            st_pir_process_level(pir, now_ms, raw_level, &pir_event) == 1) {
+                            if (st_pod_runtime_emit_event(&pod_runtime, sensor_id,
+                                                          ST_SENSOR_MOTION,
+                                                          pir_event.detected_at_ms,
+                                                          1.0F) != 0) {
+                                ESP_LOGW(TAG, "Dropping %s event: telemetry queue full",
+                                         sensor_id);
+                            }
+                        }
+                    } else if (st_hotswap_binding_get_reed(&final_pcb_binding, port_index, &reed,
+                                                           &sensor_id) == 1) {
+                        st_reed_event_t reed_event;
+
+                        if (st_espidf_muxed_data_common_read_level(
+                                &final_pcb_muxed_data_common[port_index], &raw_level) ==
+                                ST_HAL_OK &&
+                            st_reed_debounce_update(reed, now_ms, raw_level, &reed_event) == 1) {
+                            if (st_pod_runtime_emit_event(
+                                    &pod_runtime, sensor_id, ST_SENSOR_CONTACT,
+                                    reed_event.confirmed_at_ms,
+                                    reed_event.level == ST_REED_OPEN ? 1.0F : 0.0F) != 0) {
+                                ESP_LOGW(TAG, "Dropping %s event: telemetry queue full",
+                                         sensor_id);
+                            }
+                        }
+                    }
+                }
+            }
 #endif
             st_pod_runtime_tick(&pod_runtime, now_ms);
 #if SITETWIN_POD_PROFILE_EQUIPMENT_BUILD
@@ -1533,11 +1736,30 @@ void app_main(void)
     ESP_ERROR_CHECK(pod_command_queue != NULL && pod_command_ack_queue != NULL
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
+#if SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+    pod_sensor_runtime_ready = pod_sensor_runtime_init_final_pcb() == ESP_OK;
+#else
     pod_sensor_runtime_ready = pod_sensor_runtime_init() == ESP_OK;
+#endif
     if (!pod_sensor_runtime_ready) {
         ESP_LOGE(TAG, "Pod sensor runtime initialization failed");
     }
-#if SITETWIN_POD_PROFILE_ACTIVITY_BUILD
+#if SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+    ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
+                                             &pod_command_runtime,
+                                             ST_POD_UNIVERSAL,
+                                             "POD_UNIVERSAL_1",
+                                             st_espidf_pod_command_persistence(),
+                                             pod_runtime.registry.boot_id,
+                                             monotonic_now_ms()) == 0
+                        ? ESP_OK
+                        : ESP_FAIL);
+    /* Shared GPIO19 buzzer/LED actuation for the final PCB is separate,
+     * later work -- pod_local_output_ready deliberately stays 0 here, so
+     * the alarm/command state machine still runs correctly, it just has
+     * no physical indicator to drive yet. */
+    ESP_LOGI(TAG, "Final PCB profile: shared alarm indicator not yet wired, staying silent");
+#elif SITETWIN_POD_PROFILE_ACTIVITY_BUILD
     ESP_ERROR_CHECK(st_command_runtime_init_with_boot(
                                              &pod_command_runtime,
                                              ST_POD_ACTIVITY_ACCESS,

@@ -8,7 +8,8 @@ if(SITETWIN_DEVICE_ROLE STREQUAL "gateway")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE
         SITETWIN_GATEWAY_ROLE_BUILD=1
         SITETWIN_POD_PROFILE_ACTIVITY_BUILD=0
-        SITETWIN_POD_PROFILE_EQUIPMENT_BUILD=0)
+        SITETWIN_POD_PROFILE_EQUIPMENT_BUILD=0
+        SITETWIN_POD_PROFILE_FINAL_PCB_BUILD=0)
 else()
     if(NOT DEFINED SITETWIN_POD_PROFILE)
         set(SITETWIN_POD_PROFILE "environment")
@@ -17,21 +18,29 @@ else()
     if(SITETWIN_POD_PROFILE STREQUAL "activity")
         set(_sitetwin_activity 1)
         set(_sitetwin_equipment 0)
+        set(_sitetwin_final_pcb 0)
     elseif(SITETWIN_POD_PROFILE STREQUAL "equipment")
         set(_sitetwin_activity 0)
         set(_sitetwin_equipment 1)
+        set(_sitetwin_final_pcb 0)
     elseif(SITETWIN_POD_PROFILE STREQUAL "environment")
         set(_sitetwin_activity 0)
         set(_sitetwin_equipment 0)
+        set(_sitetwin_final_pcb 0)
+    elseif(SITETWIN_POD_PROFILE STREQUAL "final_pcb")
+        set(_sitetwin_activity 0)
+        set(_sitetwin_equipment 0)
+        set(_sitetwin_final_pcb 1)
     else()
         message(FATAL_ERROR
             "Unknown SITETWIN_POD_PROFILE='${SITETWIN_POD_PROFILE}'. "
-            "Choose environment, activity, or equipment.")
+            "Choose environment, activity, equipment, or final_pcb.")
     endif()
 
     message(STATUS "SiteTwin pod profile: ${SITETWIN_POD_PROFILE}")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE
         SITETWIN_GATEWAY_ROLE_BUILD=0
         SITETWIN_POD_PROFILE_ACTIVITY_BUILD=${_sitetwin_activity}
-        SITETWIN_POD_PROFILE_EQUIPMENT_BUILD=${_sitetwin_equipment})
+        SITETWIN_POD_PROFILE_EQUIPMENT_BUILD=${_sitetwin_equipment}
+        SITETWIN_POD_PROFILE_FINAL_PCB_BUILD=${_sitetwin_final_pcb})
 endif()
