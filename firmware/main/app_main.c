@@ -1899,19 +1899,31 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ST_ZIGBEE_STORAGE_PARTITION));
 #if !SITETWIN_GATEWAY_ROLE_BUILD && SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
-    /* EXPERIMENTAL power-optimization spike (feature/battery-optimization,
-     * not yet real-hardware verified as of this commit) -- base ESP-IDF
-     * power management only (light sleep + tickless idle), CPU frequency
-     * pinned at both ends so this call itself changes nothing about clock
-     * speed yet. Called early, before the Zigbee task starts, matching
-     * the ordering used in Espressif's own sleepy-end-device examples.
-     * Deliberately does NOT call the Zigbee stack's own
-     * esp_zb_sleep_enable() -- see CONFIG_PM_ENABLE's help text in
-     * sdkconfig.final-pcb.defaults for why. */
+    /* EXPERIMENTAL power-optimization spike (feature/battery-optimization).
+     * Step 1 (base ESP-IDF power management: light sleep + tickless idle,
+     * CPU frequency pinned, no dynamic scaling) was real-hardware verified
+     * -- see feature/battery-lightsleep and docs/lightsleep-verification.md
+     * for what was and wasn't tested. This is step 2: actual dynamic CPU
+     * frequency scaling, allowing the idle frequency to drop to the
+     * ESP32-C6's XTAL frequency (40MHz) instead of staying pinned at
+     * CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ (160MHz) even while idle. 40MHz is
+     * the correct minimum for this chip -- ESP-IDF's own power management
+     * docs specify min_freq_mhz should be the XTAL frequency (or an
+     * integer divisor of it), and 40MHz is the ESP32-C6's XTAL. Wi-Fi/
+     * Zigbee/peripheral drivers are expected to acquire their own
+     * ESP_PM_CPU_FREQ_MAX/ESP_PM_APB_FREQ_MAX locks while actively using
+     * the radio or a peripheral, automatically forcing the CPU back to
+     * max_freq_mhz for as long as that lock is held -- this app-level
+     * call does not need to (and does not) manage that itself. Still does
+     * NOT call the Zigbee stack's own esp_zb_sleep_enable() -- see
+     * CONFIG_PM_ENABLE's help text in sdkconfig.final-pcb.defaults for
+     * why that remains a separate, higher-risk step not yet attempted.
+     *
+     * NOT YET VERIFIED ON REAL HARDWARE as of this commit. */
     {
         esp_pm_config_t pm_config = {
             .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-            .min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .min_freq_mhz = 40,
             .light_sleep_enable = true,
         };
         esp_err_t pm_result = esp_pm_configure(&pm_config);
