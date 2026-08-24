@@ -15,17 +15,17 @@ typedef struct {
 } st_gateway_sensor_identity_t;
 
 static const st_gateway_pod_identity_t pod_identity_table[] = {
-    {ST_POD_1_SHORT_ADDRESS, ST_POD_1_ID},
-    {ST_POD_2_SHORT_ADDRESS, ST_POD_2_ID},
-    {ST_POD_3_SHORT_ADDRESS, ST_POD_3_ID},
-    /* Whitelisted test-bench identities: real short addresses assigned during
-     * ad-hoc Zigbee commissioning for the currently provisioned dev boards.
-     * These are NOT a substitute for the planned IEEE-address provisioning
-     * (see backlog item "Identity provisioning") and will need updating if
-     * the coordinator's NVS is erased and pods re-join with new addresses. */
+    /* Whitelisted short addresses for the project's three physical pods.
+     * Hardcoded by design (see project decision log): with only three
+     * fixed devices in the final stretch, a full IEEE-long-address
+     * identity migration was judged not worth the added complexity.
+     * These are real Zigbee short addresses assigned during commissioning
+     * and will need updating by hand whenever a pod is re-commissioned
+     * (e.g. after a flash that wipes zb_storage/zb_fct NVS) and joins
+     * under a new address -- see the POD_3C60 entry below for a concrete
+     * case of exactly that happening. */
     {0x67C3U, "POD_67C3"},
     {0x6647U, "POD_6647"},
-    {0x1FBAU, "POD_1FBA"},
     /* POD_3C60: the final-PCB hot-swap dev unit re-commissioned under a new
      * short address after an accidental gateway-wifi firmware flash
      * overwrote its zb_storage/zb_fct NVS partitions (that image's factory

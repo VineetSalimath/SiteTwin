@@ -11,30 +11,34 @@
         }                                                                                        \
     } while (0)
 
+/* Exercises the three real whitelisted pods (see pod_identity_table in
+ * gateway_identity.c) rather than the old POD_1/POD_2/POD_3 placeholders,
+ * which were removed -- they were never assigned to any real device and
+ * only consumed gateway pod-tracking slots. */
 static int test_numbered_identity_and_reverse_route(void)
 {
     char pod_id[ST_POD_ID_MAX_LEN];
     char sensor_id[ST_SENSOR_ID_MAX_LEN];
     uint16_t address = 0U;
 
-    EXPECT(st_gateway_identity_resolve(ST_POD_1_SHORT_ADDRESS, 2U, ST_SENSOR_CO2_PPM,
+    EXPECT(st_gateway_identity_resolve(0x67C3U, 2U, ST_SENSOR_CO2_PPM,
                                        pod_id, sizeof(pod_id), sensor_id,
                                        sizeof(sensor_id)) == 0);
-    EXPECT(strcmp(pod_id, ST_POD_1_ID) == 0);
+    EXPECT(strcmp(pod_id, "POD_67C3") == 0);
     EXPECT(strcmp(sensor_id, "scd41_co2") == 0);
     EXPECT(st_gateway_identity_short_address(pod_id, &address) == 0);
-    EXPECT(address == ST_POD_1_SHORT_ADDRESS);
+    EXPECT(address == 0x67C3U);
 
-    EXPECT(st_gateway_identity_resolve(ST_POD_2_SHORT_ADDRESS, 1U, ST_SENSOR_MOTION,
+    EXPECT(st_gateway_identity_resolve(0x6647U, 1U, ST_SENSOR_MOTION,
                                        pod_id, sizeof(pod_id), sensor_id,
                                        sizeof(sensor_id)) == 0);
-    EXPECT(strcmp(pod_id, ST_POD_2_ID) == 0);
+    EXPECT(strcmp(pod_id, "POD_6647") == 0);
     EXPECT(strcmp(sensor_id, "pir_motion") == 0);
 
-    EXPECT(st_gateway_identity_resolve(ST_POD_3_SHORT_ADDRESS, 3U,
+    EXPECT(st_gateway_identity_resolve(0x3C60U, 3U,
                                        ST_SENSOR_TEMPERATURE_C, pod_id,
                                        sizeof(pod_id), sensor_id, sizeof(sensor_id)) == 0);
-    EXPECT(strcmp(pod_id, ST_POD_3_ID) == 0);
+    EXPECT(strcmp(pod_id, "POD_3C60") == 0);
     EXPECT(strcmp(sensor_id, "ds18b20_temperature") == 0);
     return 0;
 }

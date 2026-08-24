@@ -1797,18 +1797,12 @@ void app_main(void)
                         gateway_start_ms) == 0
                         ? ESP_OK
                         : ESP_FAIL);
-    ESP_ERROR_CHECK(st_gateway_state_register_pod(&gateway_state, ST_POD_1_ID,
-                                                  gateway_start_ms) == 0
-                        ? ESP_OK
-                        : ESP_FAIL);
-    ESP_ERROR_CHECK(st_gateway_state_register_pod(&gateway_state, ST_POD_2_ID,
-                                                  gateway_start_ms) == 0
-                        ? ESP_OK
-                        : ESP_FAIL);
-    ESP_ERROR_CHECK(st_gateway_state_register_pod(&gateway_state, ST_POD_3_ID,
-                                                  gateway_start_ms) == 0
-                        ? ESP_OK
-                        : ESP_FAIL);
+    /* POD_1/POD_2/POD_3 placeholder pre-registration removed -- these
+     * identities were never assigned to any real device and only consumed
+     * tracking slots / risked false stale-pod incidents (see project
+     * decision log). Real pods now register themselves dynamically as
+     * their telemetry/events first arrive, same as before for any pod
+     * not pre-registered here. */
     gateway_uart_init();
     ESP_ERROR_CHECK(xTaskCreate(gateway_state_task, "st_gw_state", 4096, NULL,
                                 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL);
