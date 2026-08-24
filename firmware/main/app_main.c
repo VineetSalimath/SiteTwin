@@ -1328,6 +1328,47 @@ static esp_err_t pod_sensor_runtime_init_final_pcb(void)
 
     ESP_LOGI(TAG, "Final PCB hot-swap runtime ready (%u ports, GPIO18 pull-up gate re-armed)",
              (unsigned int)ST_FINAL_PCB_PORT_COUNT);
+
+    /* TEMPORARY -- power-optimization spike, not production logic. Purely
+     * to empirically determine TS884 wake active polarity (currently
+     * unconfirmed -- see CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY
+     * and the H0 contract's own explicit warning against assuming one).
+     * No pull resistor: TS884 is a driven comparator output, not an
+     * open-drain/floating line. Remove this whole block (and the level-
+     * logging in the final_pcb poll loop) once polarity is confirmed and
+     * a real interrupt-driven wake path replaces it. */
+    {
+        gpio_config_t wake_probe_config;
+        static const int kWakeProbeGpio[ST_FINAL_PCB_PORT_COUNT] = {
+            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_1_GPIO,
+            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_2_GPIO,
+            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_3_GPIO,
+            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO,
+        };
+        uint64_t wake_probe_mask = 0ULL;
+        size_t wake_probe_index;
+
+        for (wake_probe_index = 0U; wake_probe_index < ST_FINAL_PCB_PORT_COUNT;
+             ++wake_probe_index) {
+            wake_probe_mask |= 1ULL << kWakeProbeGpio[wake_probe_index];
+        }
+        memset(&wake_probe_config, 0, sizeof(wake_probe_config));
+        wake_probe_config.pin_bit_mask = wake_probe_mask;
+        wake_probe_config.mode = GPIO_MODE_INPUT;
+        wake_probe_config.pull_up_en = GPIO_PULLUP_DISABLE;
+        wake_probe_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        wake_probe_config.intr_type = GPIO_INTR_DISABLE;
+        result = gpio_config(&wake_probe_config);
+        if (result != ESP_OK) {
+            ESP_LOGW(TAG, "[wake-probe] GPIO config failed: %d -- polarity spike inactive",
+                     (int)result);
+        } else {
+            ESP_LOGI(TAG, "[wake-probe] watching GPIO %d/%d/%d/%d for ports 0-3",
+                     kWakeProbeGpio[0], kWakeProbeGpio[1], kWakeProbeGpio[2],
+                     kWakeProbeGpio[3]);
+        }
+    }
+
     return ESP_OK;
 }
 #endif
@@ -1633,6 +1674,39 @@ static void pod_telemetry_task(void *context)
             if (now_ms - final_pcb_last_scan_at_ms >= CONFIG_SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS) {
                 final_pcb_last_scan_at_ms = now_ms;
                 st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
+
+                /* TEMPORARY -- power-optimization spike (see wake_probe_config
+                 * above). Logs only on a level change, not every scan, so a
+                 * manual insert/remove test on each port produces a short,
+                 * readable trail instead of one line every 200ms. */
+                {
+                    static const int kWakeProbeGpio[ST_FINAL_PCB_PORT_COUNT] = {
+                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_1_GPIO,
+                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_2_GPIO,
+                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_3_GPIO,
+                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO,
+                    };
+                    static int wake_probe_last_level[ST_FINAL_PCB_PORT_COUNT] = {-1, -1, -1, -1};
+                    size_t wake_probe_index;
+
+                    for (wake_probe_index = 0U; wake_probe_index < ST_FINAL_PCB_PORT_COUNT;
+                         ++wake_probe_index) {
+                        int level = gpio_get_level(kWakeProbeGpio[wake_probe_index]);
+
+                        if (level != wake_probe_last_level[wake_probe_index]) {
+                            ESP_LOGI(TAG,
+                                     "[wake-probe] port%u (GPIO%d) level changed: %d -> %d "
+                                     "(port lifecycle now %d)",
+                                     (unsigned int)wake_probe_index,
+                                     kWakeProbeGpio[wake_probe_index],
+                                     wake_probe_last_level[wake_probe_index], level,
+                                     (int)st_board_port_manager_get_state(
+                                         &final_pcb_port_manager, wake_probe_index)
+                                         ->lifecycle);
+                            wake_probe_last_level[wake_probe_index] = level;
+                        }
+                    }
+                }
 
                 /* detach() (called synchronously from inside the poll
                  * above, for any port that just went empty) records which
