@@ -1695,6 +1695,24 @@ static void pod_telemetry_task(void *context)
                 }
                 if (st_hotswap_scan_scheduler_tick(&final_pcb_scan_scheduler, wake_levels,
                                                    now_ms) != 0) {
+                    /* TEMPORARY -- confirms the scheduler is actually
+                     * throttling, not just always returning 1 (a bug here
+                     * would still pass an insert/remove functional test,
+                     * since debounce/detection latency would only get
+                     * worse, not break outright -- this is the only real
+                     * evidence the power-saving behavior itself is
+                     * working). Remove once confirmed on real hardware. */
+                    {
+                        static uint64_t last_real_scan_at_ms;
+                        static uint8_t last_real_scan_valid;
+
+                        if (last_real_scan_valid != 0U) {
+                            ESP_LOGI(TAG, "[scan-scheduler] real scan, gap=%llums",
+                                     (unsigned long long)(now_ms - last_real_scan_at_ms));
+                        }
+                        last_real_scan_at_ms = now_ms;
+                        last_real_scan_valid = 1U;
+                    }
                     st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
 
                     /* detach() (called synchronously from inside the poll
