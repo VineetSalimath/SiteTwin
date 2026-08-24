@@ -127,7 +127,15 @@ static int attach_scd41(st_hotswap_port_slot_t *slot, const st_hotswap_binding_i
     memset(&config, 0, sizeof(config));
     config.bus = io->i2c_bus;
     config.address = ST_SCD41_DEFAULT_ADDRESS;
-    config.measurement_mode = ST_SCD41_MODE_PERIODIC;
+    /* Low-power periodic (not standard) -- matches the fixed Environment
+     * profile's own default (CONFIG_SITETWIN_SCD41_MODE_LOW_POWER_PERIODIC,
+     * already default=y there), so this isn't a new, unvalidated pattern.
+     * The driver's own GET_DATA_READY check (finish_data_ready_status)
+     * already correctly waits/retries rather than returning stale data,
+     * so polling this slower-updating mode at the same
+     * ST_HOTSWAP_SCD41_POLL_INTERVAL_MS needs no other change -- CO2
+     * readings simply update roughly every ~30s instead of ~5s. */
+    config.measurement_mode = ST_SCD41_MODE_LOW_POWER_PERIODIC;
     config.poll_interval_ms = ST_HOTSWAP_SCD41_POLL_INTERVAL_MS;
     config.co2_sensor_id = kScd41CO2Id;
 
