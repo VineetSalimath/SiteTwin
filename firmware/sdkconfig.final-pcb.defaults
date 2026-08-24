@@ -1,11 +1,17 @@
-# H1/H2 compile profile only. Dynamic hot-swap and GPIO19 output remain off.
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ZB_ENABLED=y
 CONFIG_SITETWIN_FINAL_PCB_PROFILE=y
-CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY_UNKNOWN=y
+# CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW: empirically confirmed
+# via a real insert/remove test on all four ports (see project decision
+# log) -- LOW while a module is present, HIGH when empty, consistent
+# across all four independently-wired wake pins. Not an exhaustive
+# electrical characterisation (one sensor type, no bounce/cold-boot
+# testing), but four independent channels agreeing is strong enough
+# evidence to build the wake-driven scan scheduler on.
+CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW=y
 # CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED: functionally
 # verified on the assembled final PCB (GPIO19's 2s-on/1s-off blink
 # pattern observed working correctly for both LED and buzzer, matching

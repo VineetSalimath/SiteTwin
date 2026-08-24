@@ -36,6 +36,7 @@
 #include "sitetwin/gateway_runtime.h"
 #include "sitetwin/gateway_state.h"
 #include "sitetwin/hotswap_module_binding.h"
+#include "sitetwin/hotswap_scan_scheduler.h"
 #include "sitetwin/hotswap_zigbee_slot.h"
 #include "sitetwin/ina219.h"
 #include "sitetwin/module_instance.h"
@@ -1210,7 +1211,18 @@ static st_espidf_onewire_bus_t final_pcb_onewire_bus;
 static st_espidf_muxed_data_common_t final_pcb_muxed_data_common[ST_FINAL_PCB_PORT_COUNT];
 static st_board_port_manager_t final_pcb_port_manager;
 static st_hotswap_module_binding_t final_pcb_binding;
-static uint64_t final_pcb_last_scan_at_ms;
+static st_hotswap_scan_scheduler_t final_pcb_scan_scheduler;
+/* Bit N of a wake-levels bitmask corresponds to port N's TS884 wake pin
+ * (see CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW -- polarity
+ * empirically confirmed, see project decision log). Shared between init
+ * (GPIO config) and the poll loop (reading current levels) so the pin
+ * list only needs to be written once. */
+static const int kFinalPcbWakeGpio[ST_FINAL_PCB_PORT_COUNT] = {
+    CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_1_GPIO,
+    CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_2_GPIO,
+    CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_3_GPIO,
+    CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO,
+};
 static st_espidf_shared_alarm_output_t final_pcb_alarm_output;
 static uint8_t final_pcb_alarm_output_ready;
 /* Temporary diagnostics: logs only on a lifecycle/fault transition per
@@ -1329,44 +1341,36 @@ static esp_err_t pod_sensor_runtime_init_final_pcb(void)
     ESP_LOGI(TAG, "Final PCB hot-swap runtime ready (%u ports, GPIO18 pull-up gate re-armed)",
              (unsigned int)ST_FINAL_PCB_PORT_COUNT);
 
-    /* TEMPORARY -- power-optimization spike, not production logic. Purely
-     * to empirically determine TS884 wake active polarity (currently
-     * unconfirmed -- see CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY
-     * and the H0 contract's own explicit warning against assuming one).
-     * No pull resistor: TS884 is a driven comparator output, not an
-     * open-drain/floating line. Remove this whole block (and the level-
-     * logging in the final_pcb poll loop) once polarity is confirmed and
-     * a real interrupt-driven wake path replaces it. */
+    /* TS884 wake pins as plain digital inputs -- no pull resistor, TS884
+     * is a driven comparator output, not open-drain/floating. Polarity
+     * empirically confirmed active-low (see project decision log); the
+     * scheduler below treats the bitmask as opaque, so this GPIO config
+     * itself doesn't need to know which level means "present". */
     {
-        gpio_config_t wake_probe_config;
-        static const int kWakeProbeGpio[ST_FINAL_PCB_PORT_COUNT] = {
-            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_1_GPIO,
-            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_2_GPIO,
-            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_3_GPIO,
-            CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO,
-        };
-        uint64_t wake_probe_mask = 0ULL;
-        size_t wake_probe_index;
+        gpio_config_t wake_config;
+        uint64_t wake_mask = 0ULL;
+        size_t wake_index;
 
-        for (wake_probe_index = 0U; wake_probe_index < ST_FINAL_PCB_PORT_COUNT;
-             ++wake_probe_index) {
-            wake_probe_mask |= 1ULL << kWakeProbeGpio[wake_probe_index];
+        for (wake_index = 0U; wake_index < ST_FINAL_PCB_PORT_COUNT; ++wake_index) {
+            wake_mask |= 1ULL << kFinalPcbWakeGpio[wake_index];
         }
-        memset(&wake_probe_config, 0, sizeof(wake_probe_config));
-        wake_probe_config.pin_bit_mask = wake_probe_mask;
-        wake_probe_config.mode = GPIO_MODE_INPUT;
-        wake_probe_config.pull_up_en = GPIO_PULLUP_DISABLE;
-        wake_probe_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-        wake_probe_config.intr_type = GPIO_INTR_DISABLE;
-        result = gpio_config(&wake_probe_config);
+        memset(&wake_config, 0, sizeof(wake_config));
+        wake_config.pin_bit_mask = wake_mask;
+        wake_config.mode = GPIO_MODE_INPUT;
+        wake_config.pull_up_en = GPIO_PULLUP_DISABLE;
+        wake_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        wake_config.intr_type = GPIO_INTR_DISABLE;
+        result = gpio_config(&wake_config);
         if (result != ESP_OK) {
-            ESP_LOGW(TAG, "[wake-probe] GPIO config failed: %d -- polarity spike inactive",
-                     (int)result);
-        } else {
-            ESP_LOGI(TAG, "[wake-probe] watching GPIO %d/%d/%d/%d for ports 0-3",
-                     kWakeProbeGpio[0], kWakeProbeGpio[1], kWakeProbeGpio[2],
-                     kWakeProbeGpio[3]);
+            ESP_LOGE(TAG, "Final PCB wake-pin GPIO config failed: %d", (int)result);
+            return result;
         }
+    }
+    if (st_hotswap_scan_scheduler_init(&final_pcb_scan_scheduler,
+                                       CONFIG_SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS,
+                                       CONFIG_SITETWIN_FINAL_PCB_SLOW_SCAN_INTERVAL_MS,
+                                       CONFIG_SITETWIN_FINAL_PCB_WAKE_FAST_WINDOW_MS) != 0) {
+        return ESP_FAIL;
     }
 
     return ESP_OK;
@@ -1665,115 +1669,101 @@ static void pod_telemetry_task(void *context)
                 }
             }
 #elif SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
-            /* Re-scan all four ports for insertion/removal/type changes
-             * on its own cadence -- independent of this task's 50ms
-             * tick and of each attached sensor's own sample_interval_ms.
+            /* Re-scan all four ports for insertion/removal/type changes.
+             * Gated by the wake-driven scheduler rather than a fixed
+             * short interval: the four TS884 wake pins (empirically
+             * confirmed active-low, see project decision log) are cheap
+             * digital reads, not ADC samples, so checking them every
+             * 50ms tick costs far less than the real scan itself. The
+             * scheduler only lets the real, unmodified board_port_manager
+             * scan run at the fast (CONFIG_SITETWIN_FINAL_PCB_SCAN_
+             * INTERVAL_MS) cadence for a window after an actual wake-pin
+             * change, falling back to the much slower CONFIG_SITETWIN_
+             * FINAL_PCB_SLOW_SCAN_INTERVAL_MS the rest of the time.
              * Attach/detach (and therefore registry membership) happens
-             * entirely inside this call via board_port_manager's
-             * callbacks into hotswap_module_binding. */
-            if (now_ms - final_pcb_last_scan_at_ms >= CONFIG_SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS) {
-                final_pcb_last_scan_at_ms = now_ms;
-                st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
+             * entirely inside the poll call via board_port_manager's
+             * callbacks into hotswap_module_binding, exactly as before --
+             * this only changes how often that call happens. */
+            {
+                uint8_t wake_levels = 0U;
+                size_t wake_index;
 
-                /* TEMPORARY -- power-optimization spike (see wake_probe_config
-                 * above). Logs only on a level change, not every scan, so a
-                 * manual insert/remove test on each port produces a short,
-                 * readable trail instead of one line every 200ms. */
-                {
-                    static const int kWakeProbeGpio[ST_FINAL_PCB_PORT_COUNT] = {
-                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_1_GPIO,
-                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_2_GPIO,
-                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_3_GPIO,
-                        CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO,
-                    };
-                    static int wake_probe_last_level[ST_FINAL_PCB_PORT_COUNT] = {-1, -1, -1, -1};
-                    size_t wake_probe_index;
-
-                    for (wake_probe_index = 0U; wake_probe_index < ST_FINAL_PCB_PORT_COUNT;
-                         ++wake_probe_index) {
-                        int level = gpio_get_level(kWakeProbeGpio[wake_probe_index]);
-
-                        if (level != wake_probe_last_level[wake_probe_index]) {
-                            ESP_LOGI(TAG,
-                                     "[wake-probe] port%u (GPIO%d) level changed: %d -> %d "
-                                     "(port lifecycle now %d)",
-                                     (unsigned int)wake_probe_index,
-                                     kWakeProbeGpio[wake_probe_index],
-                                     wake_probe_last_level[wake_probe_index], level,
-                                     (int)st_board_port_manager_get_state(
-                                         &final_pcb_port_manager, wake_probe_index)
-                                         ->lifecycle);
-                            wake_probe_last_level[wake_probe_index] = level;
-                        }
+                for (wake_index = 0U; wake_index < ST_FINAL_PCB_PORT_COUNT; ++wake_index) {
+                    if (gpio_get_level(kFinalPcbWakeGpio[wake_index]) != 0) {
+                        wake_levels |= (uint8_t)(1U << wake_index);
                     }
                 }
+                if (st_hotswap_scan_scheduler_tick(&final_pcb_scan_scheduler, wake_levels,
+                                                   now_ms) != 0) {
+                    st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
 
-                /* detach() (called synchronously from inside the poll
-                 * above, for any port that just went empty) records which
-                 * capabilities that port was reporting under -- drain and
-                 * force-clear any alarm conditions still active for them,
-                 * so a detached sensor's alarm can't linger with no data
-                 * source left to ever clear it naturally. See the project
-                 * decision log for why this auto-restores for free: the
-                 * rule itself is untouched, so a same-type sensor
-                 * re-attaching and reporting again is evaluated normally
-                 * by st_alarm_runtime_ingest() with no separate
-                 * "re-enable" step needed. */
-                {
-                    size_t drain_port;
+                    /* detach() (called synchronously from inside the poll
+                     * above, for any port that just went empty) records which
+                     * capabilities that port was reporting under -- drain and
+                     * force-clear any alarm conditions still active for them,
+                     * so a detached sensor's alarm can't linger with no data
+                     * source left to ever clear it naturally. See the project
+                     * decision log for why this auto-restores for free: the
+                     * rule itself is untouched, so a same-type sensor
+                     * re-attaching and reporting again is evaluated normally
+                     * by st_alarm_runtime_ingest() with no separate
+                     * "re-enable" step needed. */
+                    {
+                        size_t drain_port;
 
-                    for (drain_port = 0U; drain_port < ST_FINAL_PCB_PORT_COUNT; ++drain_port) {
-                        st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
-                        uint8_t cleared_count = st_hotswap_module_binding_take_cleared_capabilities(
-                            &final_pcb_binding, drain_port, cleared,
-                            ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT);
-                        uint8_t cleared_index;
+                        for (drain_port = 0U; drain_port < ST_FINAL_PCB_PORT_COUNT; ++drain_port) {
+                            st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+                            uint8_t cleared_count = st_hotswap_module_binding_take_cleared_capabilities(
+                                &final_pcb_binding, drain_port, cleared,
+                                ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT);
+                            uint8_t cleared_index;
 
-                        for (cleared_index = 0U; cleared_index < cleared_count; ++cleared_index) {
-                            (void)st_alarm_runtime_suspend_capability(
-                                &pod_command_runtime.alarm, cleared[cleared_index], now_ms);
-                        }
-                    }
-                }
-
-                {
-                    static const char *const kPortStatusSensorId[ST_FINAL_PCB_PORT_COUNT] = {
-                        "port0_status", "port1_status", "port2_status", "port3_status"};
-                    size_t diag_port;
-
-                    for (diag_port = 0U; diag_port < ST_FINAL_PCB_PORT_COUNT; ++diag_port) {
-                        const st_board_port_state_t *diag_state =
-                            st_board_port_manager_get_state(&final_pcb_port_manager, diag_port);
-
-                        if (diag_state != NULL &&
-                            (diag_state->lifecycle != final_pcb_last_lifecycle[diag_port] ||
-                             diag_state->fault_reason !=
-                                 final_pcb_last_fault_reason[diag_port])) {
-                            ESP_LOGI(TAG,
-                                     "Port %u: lifecycle=%d fault=%d committed_type=%d "
-                                     "raw_mv=%u calibrated=%u status=%d",
-                                     (unsigned int)diag_port, (int)diag_state->lifecycle,
-                                     (int)diag_state->fault_reason,
-                                     (int)diag_state->committed_type,
-                                     (unsigned int)diag_state->last_identity.millivolts,
-                                     (unsigned int)diag_state->last_identity.voltage_calibrated,
-                                     (int)diag_state->last_identity.status);
-                            /* value encoding: lifecycle*10 + fault_reason
-                             * (fault_reason is always < 10, so this is
-                             * unambiguous) -- e.g. ACTIVE/no-fault = 60,
-                             * FAULTED/UNCLASSIFIED_ID = 71. Kept
-                             * deliberately simple rather than a second
-                             * wire-format contract; decode by reversing
-                             * the same arithmetic downstream. */
-                            if (st_pod_runtime_emit_health(
-                                    &pod_runtime, kPortStatusSensorId[diag_port], now_ms,
-                                    (float)((int)diag_state->lifecycle * 10 +
-                                           (int)diag_state->fault_reason)) != 0) {
-                                ESP_LOGW(TAG, "Dropping port %u status event: queue full",
-                                         (unsigned int)diag_port);
+                            for (cleared_index = 0U; cleared_index < cleared_count; ++cleared_index) {
+                                (void)st_alarm_runtime_suspend_capability(
+                                    &pod_command_runtime.alarm, cleared[cleared_index], now_ms);
                             }
-                            final_pcb_last_lifecycle[diag_port] = diag_state->lifecycle;
-                            final_pcb_last_fault_reason[diag_port] = diag_state->fault_reason;
+                        }
+                    }
+
+                    {
+                        static const char *const kPortStatusSensorId[ST_FINAL_PCB_PORT_COUNT] = {
+                            "port0_status", "port1_status", "port2_status", "port3_status"};
+                        size_t diag_port;
+
+                        for (diag_port = 0U; diag_port < ST_FINAL_PCB_PORT_COUNT; ++diag_port) {
+                            const st_board_port_state_t *diag_state =
+                                st_board_port_manager_get_state(&final_pcb_port_manager, diag_port);
+
+                            if (diag_state != NULL &&
+                                (diag_state->lifecycle != final_pcb_last_lifecycle[diag_port] ||
+                                 diag_state->fault_reason !=
+                                     final_pcb_last_fault_reason[diag_port])) {
+                                ESP_LOGI(TAG,
+                                         "Port %u: lifecycle=%d fault=%d committed_type=%d "
+                                         "raw_mv=%u calibrated=%u status=%d",
+                                         (unsigned int)diag_port, (int)diag_state->lifecycle,
+                                         (int)diag_state->fault_reason,
+                                         (int)diag_state->committed_type,
+                                         (unsigned int)diag_state->last_identity.millivolts,
+                                         (unsigned int)diag_state->last_identity.voltage_calibrated,
+                                         (int)diag_state->last_identity.status);
+                                /* value encoding: lifecycle*10 + fault_reason
+                                 * (fault_reason is always < 10, so this is
+                                 * unambiguous) -- e.g. ACTIVE/no-fault = 60,
+                                 * FAULTED/UNCLASSIFIED_ID = 71. Kept
+                                 * deliberately simple rather than a second
+                                 * wire-format contract; decode by reversing
+                                 * the same arithmetic downstream. */
+                                if (st_pod_runtime_emit_health(
+                                        &pod_runtime, kPortStatusSensorId[diag_port], now_ms,
+                                        (float)((int)diag_state->lifecycle * 10 +
+                                               (int)diag_state->fault_reason)) != 0) {
+                                    ESP_LOGW(TAG, "Dropping port %u status event: queue full",
+                                             (unsigned int)diag_port);
+                                }
+                                final_pcb_last_lifecycle[diag_port] = diag_state->lifecycle;
+                                final_pcb_last_fault_reason[diag_port] = diag_state->fault_reason;
+                            }
                         }
                     }
                 }

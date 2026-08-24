@@ -84,17 +84,26 @@ config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_4_GPIO
 
 choice SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY
     prompt "TS884 wake active polarity"
-    default SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY_UNKNOWN
+    default SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW
     depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Empirically confirmed active-low on the assembled final PCB: all
+        four wake pins read LOW while a module is present, HIGH when
+        empty, consistently across all four independently-wired ports
+        during a real insert/remove test on each (see project decision
+        log). Not an exhaustive electrical characterisation -- one
+        sensor type cycled through each port, no bounce/rapid-reinsert
+        or cold-boot-state testing -- but four independent channels
+        agreeing leaves little room for this being a fluke.
 
 config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY_UNKNOWN
     bool "Unknown (do not enable wake handling)"
 
 config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW
-    bool "Active low (requires bench verification)"
+    bool "Active low (empirically confirmed, see help)"
 
 config SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_HIGH
-    bool "Active high (requires bench verification)"
+    bool "Active high (not consistent with observed test data)"
 
 endchoice
 
@@ -236,7 +245,41 @@ config SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS
     help
         How often the telemetry task re-scans all four ports for
         insertion/removal/type changes. Independent of each attached
-        sensor's own sample_interval_ms.
+        sensor's own sample_interval_ms. Used as the "fast" interval by
+        the wake-driven scan scheduler below -- this is exactly the
+        cadence already real-hardware-verified for insertion/removal
+        detection latency, unchanged from before the scheduler existed.
+
+config SITETWIN_FINAL_PCB_SLOW_SCAN_INTERVAL_MS
+    int "Wake-idle port scan interval (milliseconds)"
+    range 200 60000
+    default 5000
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        Scan interval used once SITETWIN_FINAL_PCB_WAKE_FAST_WINDOW_MS
+        has elapsed with no TS884 wake-pin change on any port -- i.e.
+        nothing has been plugged or unplugged recently. Falling back to
+        this much longer interval is the actual power saving: the
+        expensive ADC-based identification scan runs far less often
+        while idle, and the four wake pins (a cheap digital read, not an
+        ADC sample) are what re-triggers the fast interval on a real
+        change. Only takes effect once
+        SITETWIN_FINAL_PCB_HOTSWAP_WAKE_POLARITY is set to a confirmed
+        value (not UNKNOWN) -- see the project decision log for how that
+        was empirically determined.
+
+config SITETWIN_FINAL_PCB_WAKE_FAST_WINDOW_MS
+    int "Fast-scan window after a wake-pin change (milliseconds)"
+    range 0 60000
+    default 2000
+    depends on SITETWIN_FINAL_PCB_PROFILE
+    help
+        How long to keep scanning at SITETWIN_FINAL_PCB_SCAN_INTERVAL_MS
+        (the fast interval) after the last observed change on any wake
+        pin, before falling back to the slow interval. Should comfortably
+        exceed board_port_manager's own stable-scan-count settle time so
+        a real insertion/removal is never caught mid-transition when the
+        scheduler drops back to slow scanning.
 
 endmenu
 
