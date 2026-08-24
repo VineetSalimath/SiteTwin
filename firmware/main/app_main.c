@@ -4,6 +4,7 @@
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 
@@ -1897,6 +1898,30 @@ void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nvs_flash_init_partition(ST_ZIGBEE_STORAGE_PARTITION));
+#if !SITETWIN_GATEWAY_ROLE_BUILD && SITETWIN_POD_PROFILE_FINAL_PCB_BUILD
+    /* EXPERIMENTAL power-optimization spike (feature/battery-optimization,
+     * not yet real-hardware verified as of this commit) -- base ESP-IDF
+     * power management only (light sleep + tickless idle), CPU frequency
+     * pinned at both ends so this call itself changes nothing about clock
+     * speed yet. Called early, before the Zigbee task starts, matching
+     * the ordering used in Espressif's own sleepy-end-device examples.
+     * Deliberately does NOT call the Zigbee stack's own
+     * esp_zb_sleep_enable() -- see CONFIG_PM_ENABLE's help text in
+     * sdkconfig.final-pcb.defaults for why. */
+    {
+        esp_pm_config_t pm_config = {
+            .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .light_sleep_enable = true,
+        };
+        esp_err_t pm_result = esp_pm_configure(&pm_config);
+
+        if (pm_result != ESP_OK) {
+            ESP_LOGW(TAG, "esp_pm_configure failed: %d -- continuing without light sleep",
+                     (int)pm_result);
+        }
+    }
+#endif
 #if SITETWIN_GATEWAY_ROLE_BUILD
     uint64_t gateway_start_ms = monotonic_now_ms();
 

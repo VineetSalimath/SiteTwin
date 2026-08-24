@@ -19,3 +19,19 @@ CONFIG_SITETWIN_FINAL_PCB_HOTSWAP_WAKE_ACTIVE_LOW=y
 # electrical characterisation (sustained current draw, thermal behaviour
 # over time, etc.) has been performed.
 CONFIG_SITETWIN_FINAL_PCB_SHARED_ALARM_OUTPUT_VERIFIED=y
+# EXPERIMENTAL (feature/battery-optimization spike, not yet real-hardware
+# verified as of this commit): base ESP-IDF power management only --
+# light sleep + tickless idle. Deliberately does NOT touch CPU frequency
+# scaling (min/max both pinned to CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ in
+# app_main.c's esp_pm_configure() call) and does NOT call the Zigbee
+# stack's own esp_zb_sleep_enable()/esp_zb_sleep_now() -- real, current
+# (2026) reports against esp-zigbee-sdk on this exact chip show that API
+# can hang network steering indefinitely or silently fail to actually
+# sleep despite a "correct" config (see project decision log). This is
+# step 1 of 2: confirm the base ESP-IDF layer coexists safely with
+# Zigbee/RPC/I2C on real hardware first (Wi-Fi/Zigbee drivers register
+# their own power locks during active TX/RX, so this layer should not
+# need any Zigbee-specific handling) before considering step 2 (actual
+# CPU frequency scaling and/or Zigbee-stack sleep negotiation).
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
