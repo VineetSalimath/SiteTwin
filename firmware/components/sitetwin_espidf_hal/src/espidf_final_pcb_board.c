@@ -275,7 +275,8 @@ esp_err_t st_espidf_final_pcb_board_init(st_espidf_final_pcb_board_t *board)
     }
 
     ESP_LOGW(TAG,
-             "Final PCB H2 board-port ready; ID bands are provisional and hot-swap wake is disabled");
+             "Final PCB H2 board-port ready; ID bands are provisional (wake-driven "
+             "scan scheduling active, see project decision log)");
     return ESP_OK;
 #endif
 }
