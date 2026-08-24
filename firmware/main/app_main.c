@@ -1634,6 +1634,34 @@ static void pod_telemetry_task(void *context)
                 final_pcb_last_scan_at_ms = now_ms;
                 st_board_port_manager_poll(&final_pcb_port_manager, now_ms);
 
+                /* detach() (called synchronously from inside the poll
+                 * above, for any port that just went empty) records which
+                 * capabilities that port was reporting under -- drain and
+                 * force-clear any alarm conditions still active for them,
+                 * so a detached sensor's alarm can't linger with no data
+                 * source left to ever clear it naturally. See the project
+                 * decision log for why this auto-restores for free: the
+                 * rule itself is untouched, so a same-type sensor
+                 * re-attaching and reporting again is evaluated normally
+                 * by st_alarm_runtime_ingest() with no separate
+                 * "re-enable" step needed. */
+                {
+                    size_t drain_port;
+
+                    for (drain_port = 0U; drain_port < ST_FINAL_PCB_PORT_COUNT; ++drain_port) {
+                        st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+                        uint8_t cleared_count = st_hotswap_module_binding_take_cleared_capabilities(
+                            &final_pcb_binding, drain_port, cleared,
+                            ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT);
+                        uint8_t cleared_index;
+
+                        for (cleared_index = 0U; cleared_index < cleared_count; ++cleared_index) {
+                            (void)st_alarm_runtime_suspend_capability(
+                                &pod_command_runtime.alarm, cleared[cleared_index], now_ms);
+                        }
+                    }
+                }
+
                 {
                     static const char *const kPortStatusSensorId[ST_FINAL_PCB_PORT_COUNT] = {
                         "port0_status", "port1_status", "port2_status", "port3_status"};

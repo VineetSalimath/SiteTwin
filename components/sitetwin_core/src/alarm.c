@@ -365,7 +365,8 @@ static int desired_state(const st_alarm_condition_state_t *condition, float valu
 static int apply_transition(st_alarm_runtime_t *runtime,
                             st_alarm_condition_state_t *condition,
                             const st_sensor_reading_t *reading,
-                            int active, uint64_t now_ms)
+                            int active, st_control_reason_t reason,
+                            uint64_t now_ms)
 {
     st_alarm_persistent_state_t before = *runtime->persistent;
     uint64_t cleared_instance = condition->instance_id;
@@ -387,9 +388,7 @@ static int apply_transition(st_alarm_runtime_t *runtime,
     emit_condition(runtime, condition, reading,
                    active ? ST_CONTROL_TRANSITION_ACTIVE
                           : ST_CONTROL_TRANSITION_CLEARED,
-                   active ? ST_CONTROL_REASON_RULE_TRIGGERED
-                          : ST_CONTROL_REASON_RULE_CLEARED,
-                   now_ms);
+                   reason, now_ms);
     if (!active) {
         /* Silence is scoped to the specific episode (instance_id) it was
          * requested for -- once that condition genuinely clears, reset it
@@ -465,7 +464,10 @@ int st_alarm_runtime_ingest(st_alarm_runtime_t *runtime,
             }
         }
         runtime->candidate_valid[index] = 0U;
-        result = apply_transition(runtime, condition, reading, desired, now_ms);
+        result = apply_transition(runtime, condition, reading, desired,
+                                  desired ? ST_CONTROL_REASON_RULE_TRIGGERED
+                                          : ST_CONTROL_REASON_RULE_CLEARED,
+                                  now_ms);
         if (result < 0) {
             return result;
         }
@@ -541,6 +543,51 @@ int st_alarm_runtime_silence(st_alarm_runtime_t *runtime,
     copy_id(event.sensor_id, sizeof(event.sensor_id), "alarm_silence");
     queue_event(runtime, &event);
     return 0;
+}
+
+int st_alarm_runtime_suspend_capability(st_alarm_runtime_t *runtime,
+                                        st_sensor_kind_t capability,
+                                        uint64_t now_ms)
+{
+    size_t index;
+    int cleared = 0;
+
+    if (runtime == NULL) {
+        return -1;
+    }
+    for (index = 0U; index < ST_ALARM_CONDITION_CAPACITY; ++index) {
+        st_alarm_condition_state_t *condition = &runtime->persistent->conditions[index];
+        st_sensor_reading_t synthetic;
+        int result;
+
+        if (condition->used == 0U || condition->capability != capability) {
+            continue;
+        }
+        /* Debounce state for this condition no longer means anything --
+         * its sensor is gone, so any candidate transition mid-flight is
+         * stale and must not resume against whatever value happens to
+         * arrive first after a future re-attach. */
+        runtime->candidate_valid[index] = 0U;
+        if (condition->active == 0U) {
+            continue;
+        }
+        /* apply_transition() always dereferences reading -- there is no
+         * new real reading here (the sensor is gone), so a synthetic one
+         * carrying the condition's own last-known values stands in for
+         * it. */
+        memset(&synthetic, 0, sizeof(synthetic));
+        synthetic.value = condition->last_observed;
+        synthetic.quality_flags = condition->quality_flags;
+        synthetic.sensor_kind = capability;
+        copy_id(synthetic.sensor_id, sizeof(synthetic.sensor_id), "port_detached");
+        result = apply_transition(runtime, condition, &synthetic, 0,
+                                  ST_CONTROL_REASON_SENSOR_DETACHED, now_ms);
+        if (result < 0) {
+            return result;
+        }
+        ++cleared;
+    }
+    return cleared;
 }
 
 void st_alarm_runtime_tick(st_alarm_runtime_t *runtime, uint64_t now_ms)

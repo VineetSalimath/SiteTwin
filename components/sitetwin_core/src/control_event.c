@@ -76,7 +76,7 @@ int st_control_event_encode(const st_control_event_t *event, uint8_t *payload,
         event->event_kind > ST_CONTROL_EVENT_GATEWAY_INCIDENT ||
         event->transition < ST_CONTROL_TRANSITION_ACTIVE ||
         event->transition > ST_CONTROL_TRANSITION_RECOVERED ||
-        event->reason > ST_CONTROL_REASON_CONFIGURATION_CHANGED ||
+        event->reason > ST_CONTROL_REASON_SENSOR_DETACHED ||
         event->active > 1U || event->acknowledged > 1U ||
         event->silenced > 1U ||
         event->shared_alarm_indicator_verified > 1U ||
@@ -163,7 +163,7 @@ int st_control_event_decode(const uint8_t *payload, size_t length,
         event->event_kind > ST_CONTROL_EVENT_GATEWAY_INCIDENT ||
         event->transition < ST_CONTROL_TRANSITION_ACTIVE ||
         event->transition > ST_CONTROL_TRANSITION_RECOVERED ||
-        event->reason > ST_CONTROL_REASON_CONFIGURATION_CHANGED ||
+        event->reason > ST_CONTROL_REASON_SENSOR_DETACHED ||
         event->capability > ST_SENSOR_UNKNOWN ||
         event->secondary_capability > ST_SENSOR_UNKNOWN ||
         !isfinite(event->threshold) || !isfinite(event->observed) ||
@@ -255,6 +255,7 @@ const char *st_control_reason_name(st_control_reason_t reason)
     case ST_CONTROL_REASON_MULTI_SENSOR: return "multi_sensor";
     case ST_CONTROL_REASON_COORDINATOR_RESTART: return "coordinator_restart";
     case ST_CONTROL_REASON_CONFIGURATION_CHANGED: return "configuration_changed";
+    case ST_CONTROL_REASON_SENSOR_DETACHED: return "sensor_detached";
     default: return "unknown";
     }
 }

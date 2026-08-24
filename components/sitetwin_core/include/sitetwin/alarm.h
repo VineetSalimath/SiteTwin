@@ -83,6 +83,23 @@ int st_alarm_runtime_acknowledge(st_alarm_runtime_t *runtime,
  * would have been guarding against. */
 int st_alarm_runtime_silence(st_alarm_runtime_t *runtime,
                              uint64_t instance_id, uint64_t now_ms);
+/* Force-clears any currently-active condition(s) for this capability --
+ * called when the sensor providing that capability has just been
+ * physically detached from a hot-swap port, so a stale "active" alarm
+ * does not linger with no data source left to ever clear it naturally.
+ * Also resets any in-flight debounce state for those conditions, so a
+ * stale candidate transition cannot resume against whatever value a
+ * future re-attach happens to read first. Emits a normal alarm-cleared
+ * control event tagged ST_CONTROL_REASON_SENSOR_DETACHED (distinct from
+ * a real ST_CONTROL_REASON_RULE_CLEARED) for each condition it clears.
+ * The rule configuration itself is untouched -- if a same-type sensor is
+ * re-attached and a fresh reading arrives, st_alarm_runtime_ingest()
+ * evaluates it normally, with no separate "re-enable" step needed.
+ * Returns the number of conditions cleared (0 if none were active for
+ * this capability), or -1/-2 on the same failure terms as ingest(). */
+int st_alarm_runtime_suspend_capability(st_alarm_runtime_t *runtime,
+                                        st_sensor_kind_t capability,
+                                        uint64_t now_ms);
 void st_alarm_runtime_tick(st_alarm_runtime_t *runtime, uint64_t now_ms);
 int st_alarm_runtime_next_event(st_alarm_runtime_t *runtime,
                                 st_control_event_t *event);

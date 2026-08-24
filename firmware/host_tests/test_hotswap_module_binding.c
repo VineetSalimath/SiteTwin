@@ -320,6 +320,147 @@ static int test_bus_probe_propagates_mismatch(void)
     return 0;
 }
 
+static int test_detach_reports_pir_capability(void)
+{
+    st_hotswap_module_binding_t binding;
+    st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
+    st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+
+    make_binding(&binding, &registry, &fixture);
+
+    EXPECT(st_hotswap_module_binding_attach(&binding, 1U, ST_MODULE_TYPE_PIR, 5000U) == 0);
+    /* Nothing to drain before any detach has happened on this port. */
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 1U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 0U);
+
+    st_hotswap_module_binding_detach(&binding, 1U, 6000U);
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 1U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 1U);
+    EXPECT(cleared[0] == ST_SENSOR_MOTION);
+
+    /* Draining is destructive -- a second drain without an intervening
+     * detach returns nothing, so app_main.c's per-tick drain loop can't
+     * double-clear the same capability on the next poll. */
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 1U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 0U);
+    return 0;
+}
+
+static int test_detach_reports_reed_capability(void)
+{
+    st_hotswap_module_binding_t binding;
+    st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
+    st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+
+    make_binding(&binding, &registry, &fixture);
+
+    EXPECT(st_hotswap_module_binding_attach(&binding, 2U, ST_MODULE_TYPE_REED, 1000U) == 0);
+    st_hotswap_module_binding_detach(&binding, 2U, 2000U);
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 2U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 1U);
+    EXPECT(cleared[0] == ST_SENSOR_CONTACT);
+    return 0;
+}
+
+static int test_detach_reports_both_channels_of_multichannel_module(void)
+{
+    st_hotswap_module_binding_t binding;
+    st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
+    st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+    uint8_t count;
+    int saw_temperature = 0;
+    int saw_humidity = 0;
+    uint8_t i;
+
+    make_binding(&binding, &registry, &fixture);
+
+    /* SHT41 reports two capabilities (temperature + humidity) off one
+     * physical port -- confirms detach() walks every attached channel,
+     * not just the first, when reverse-mapping port -> capabilities.
+     *
+     * st_sensor_registry_port_sensor_kind() reads port->metadata, which
+     * st_sensor_registry_attach() deliberately leaves empty until a real
+     * probe cycle completes (see test_detach_before_first_probe_reports_
+     * no_capabilities below for that exact edge case). Driving that via
+     * st_sensor_registry_tick() would require this file's fake I2C bus to
+     * pass SHT41's real CRC-validated serial-read protocol, which it
+     * isn't built to do (it returns all-zero reads) and isn't what this
+     * test exists to exercise -- SHT41's own driver tests already cover
+     * that protocol. Seeding metadata directly reaches the same state a
+     * real successful probe would have left, without coupling this test
+     * to unrelated wire-protocol detail. */
+    EXPECT(st_hotswap_module_binding_attach(&binding, 0U, ST_MODULE_TYPE_SHT41, 1000U) == 0);
+    strcpy(registry.ports[0].metadata.sensor_id, "sht41_temperature");
+    registry.ports[0].metadata.sensor_kind = ST_SENSOR_TEMPERATURE_C;
+    strcpy(registry.ports[1].metadata.sensor_id, "sht41_humidity");
+    registry.ports[1].metadata.sensor_kind = ST_SENSOR_RELATIVE_HUMIDITY_PERCENT;
+
+    st_hotswap_module_binding_detach(&binding, 0U, 2000U);
+    count = st_hotswap_module_binding_take_cleared_capabilities(
+        &binding, 0U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT);
+    EXPECT(count == 2U);
+    for (i = 0U; i < count; ++i) {
+        if (cleared[i] == ST_SENSOR_TEMPERATURE_C) {
+            saw_temperature = 1;
+        }
+        if (cleared[i] == ST_SENSOR_RELATIVE_HUMIDITY_PERCENT) {
+            saw_humidity = 1;
+        }
+    }
+    EXPECT(saw_temperature == 1);
+    EXPECT(saw_humidity == 1);
+    return 0;
+}
+
+static int test_detach_before_first_probe_reports_no_capabilities(void)
+{
+    st_hotswap_module_binding_t binding;
+    st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
+    st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+
+    make_binding(&binding, &registry, &fixture);
+
+    /* Edge case: a module unplugged before its very first probe cycle
+     * ever completes has no populated metadata to reverse-map, so
+     * detach() reports 0 capabilities to suspend. This is harmless in
+     * practice -- no reading ever reached the alarm engine for it either,
+     * so there is nothing active to leave stale -- but is worth having
+     * pinned down explicitly rather than discovered by surprise. */
+    EXPECT(st_hotswap_module_binding_attach(&binding, 0U, ST_MODULE_TYPE_SHT41, 1000U) == 0);
+    st_hotswap_module_binding_detach(&binding, 0U, 1500U);
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 0U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 0U);
+    return 0;
+}
+
+static int test_take_cleared_capabilities_rejects_invalid_args(void)
+{
+    st_hotswap_module_binding_t binding;
+    st_sensor_registry_t registry;
+    fake_binding_fixture_t fixture;
+    st_sensor_kind_t cleared[ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+
+    make_binding(&binding, &registry, &fixture);
+
+    EXPECT(st_hotswap_module_binding_attach(&binding, 1U, ST_MODULE_TYPE_PIR, 1000U) == 0);
+    st_hotswap_module_binding_detach(&binding, 1U, 2000U);
+
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               NULL, 1U, cleared, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 0U);
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, ST_HOTSWAP_BINDING_MAX_PORTS, cleared,
+               ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 0U);
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 1U, NULL, ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT) == 0U);
+    EXPECT(st_hotswap_module_binding_take_cleared_capabilities(
+               &binding, 1U, cleared, 0U) == 0U);
+    return 0;
+}
+
 int st_run_hotswap_module_binding_tests(void)
 {
     int failures = 0;
@@ -333,6 +474,11 @@ int st_run_hotswap_module_binding_tests(void)
     failures += test_bus_probe_addresses_match_contract();
     failures += test_bus_probe_delegates_to_i2c_probe_callback();
     failures += test_bus_probe_propagates_mismatch();
+    failures += test_detach_reports_pir_capability();
+    failures += test_detach_reports_reed_capability();
+    failures += test_detach_reports_both_channels_of_multichannel_module();
+    failures += test_detach_before_first_probe_reports_no_capabilities();
+    failures += test_take_cleared_capabilities_rejects_invalid_args();
 
     if (failures == 0) {
         printf("test_hotswap_module_binding: all tests passed\n");

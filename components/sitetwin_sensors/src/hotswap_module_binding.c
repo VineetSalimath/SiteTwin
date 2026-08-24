@@ -368,10 +368,55 @@ void st_hotswap_module_binding_detach(void *context, size_t port_index, uint64_t
         return;
     }
     slot = &binding->slots[port_index];
+    binding->cleared_capability_count[port_index] = 0U;
     if (slot->kind == ST_HOTSWAP_SLOT_REGISTRY_DRIVER) {
+        uint8_t channel;
+        uint8_t count = 0U;
+
+        for (channel = 0U; channel < slot->module_instance.channel_count &&
+                            count < ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT;
+             ++channel) {
+            st_sensor_kind_t kind;
+
+            if (st_sensor_registry_port_sensor_kind(
+                    binding->registry, slot->module_instance.registry_slots[channel],
+                    &kind) == 0) {
+                binding->cleared_capabilities[port_index][count] = kind;
+                ++count;
+            }
+        }
+        binding->cleared_capability_count[port_index] = count;
         st_module_instance_detach(&slot->module_instance, binding->registry, now_ms);
+    } else if (slot->kind == ST_HOTSWAP_SLOT_PIR) {
+        binding->cleared_capabilities[port_index][0] = ST_SENSOR_MOTION;
+        binding->cleared_capability_count[port_index] = 1U;
+    } else if (slot->kind == ST_HOTSWAP_SLOT_REED) {
+        binding->cleared_capabilities[port_index][0] = ST_SENSOR_CONTACT;
+        binding->cleared_capability_count[port_index] = 1U;
     }
     memset(slot, 0, sizeof(*slot));
+}
+
+uint8_t st_hotswap_module_binding_take_cleared_capabilities(
+    st_hotswap_module_binding_t *binding, size_t port_index,
+    st_sensor_kind_t *out, uint8_t out_capacity)
+{
+    uint8_t count;
+    uint8_t i;
+
+    if (binding == NULL || port_index >= binding->port_count || out == NULL ||
+        out_capacity == 0U) {
+        return 0U;
+    }
+    count = binding->cleared_capability_count[port_index];
+    if (count > out_capacity) {
+        count = out_capacity;
+    }
+    for (i = 0U; i < count; ++i) {
+        out[i] = binding->cleared_capabilities[port_index][i];
+    }
+    binding->cleared_capability_count[port_index] = 0U;
+    return count;
 }
 
 bool st_hotswap_module_binding_uses_bus_probe(void *context, st_module_type_t module_type,

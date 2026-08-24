@@ -358,6 +358,174 @@ static int test_command_capabilities_persistent_ack_and_unsupported_output(void)
     return 0;
 }
 
+static int test_suspend_capability_on_sensor_detach(void)
+{
+    st_capability_config_t config;
+    st_capability_rule_t applied;
+    st_alarm_persistent_state_t persistent;
+    st_alarm_runtime_t runtime;
+    st_control_event_t event;
+    st_sensor_reading_t reading;
+    uint64_t first_instance;
+
+    st_capability_config_init(&config, ST_POD_ACTIVITY_ACCESS);
+    EXPECT(st_capability_config_set(&config, ST_POD_ACTIVITY_ACCESS,
+                                    ST_SENSOR_CONTACT,
+                                    ST_CONFIG_RULE_STATE_ACTIVE_VALUE,
+                                    1.0F, 1U, &applied) == ST_CONFIG_RESULT_OK);
+    st_alarm_persistent_state_init(&persistent);
+    EXPECT(st_alarm_runtime_init(&runtime, "POD_2", &config, &persistent,
+                                 1UL << ST_SENSOR_CONTACT, 1U, 1U,
+                                 NULL, NULL, 0U) == 0);
+    drain_alarm_events(&runtime);
+
+    /* Door opens: real, debounce-free rule (no EVENT_DEBOUNCE_MS configured
+     * here) fires immediately, matching the reed hardware scenario this
+     * exists for. */
+    reading = contact_reading(1.0F, 1U, 10U);
+    EXPECT(st_alarm_runtime_ingest(&runtime, &reading, 10U) == 1);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
+    EXPECT(event.transition == ST_CONTROL_TRANSITION_ACTIVE);
+    first_instance = event.instance_id;
+    EXPECT(first_instance != 0U);
+    EXPECT(st_alarm_runtime_condition_active(&runtime, first_instance) == 1);
+
+    /* Sensor physically pulled while still active: detach path force-clears
+     * it, tagged with the detach-specific reason (not a real rule clear),
+     * and the previously-active instance_id is no longer active. */
+    EXPECT(st_alarm_runtime_suspend_capability(&runtime, ST_SENSOR_CONTACT,
+                                               20U) == 1);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
+    EXPECT(event.event_kind == ST_CONTROL_EVENT_ALARM_CONDITION);
+    EXPECT(event.transition == ST_CONTROL_TRANSITION_CLEARED);
+    EXPECT(event.reason == ST_CONTROL_REASON_SENSOR_DETACHED);
+    EXPECT(event.instance_id == first_instance);
+    EXPECT(st_alarm_runtime_condition_active(&runtime, first_instance) == 0);
+    EXPECT(st_alarm_runtime_any_active(&runtime) == 0);
+
+    /* Calling it again with nothing active for this capability is a safe
+     * no-op (0 conditions cleared, no event emitted) -- covers a port
+     * bouncing through detach twice in a row without a real re-attach
+     * between. */
+    EXPECT(st_alarm_runtime_suspend_capability(&runtime, ST_SENSOR_CONTACT,
+                                               25U) == 0);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) != 0);
+
+    /* Re-attach: a fresh reading for the same capability is evaluated
+     * completely normally by ingest() -- no separate "re-enable" call
+     * exists or is needed, confirming suspend_capability() only ever
+     * touched the transient active/instance state, never the rule
+     * configuration itself. */
+    reading = contact_reading(1.0F, 2U, 30U);
+    EXPECT(st_alarm_runtime_ingest(&runtime, &reading, 30U) == 1);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
+    EXPECT(event.transition == ST_CONTROL_TRANSITION_ACTIVE);
+    EXPECT(event.reason == ST_CONTROL_REASON_RULE_TRIGGERED);
+    EXPECT(event.instance_id != first_instance);
+    return 0;
+}
+
+static int test_suspend_capability_cancels_pending_debounce(void)
+{
+    st_capability_config_t config;
+    st_capability_rule_t applied;
+    st_alarm_persistent_state_t persistent;
+    st_alarm_runtime_t runtime;
+    st_control_event_t event;
+    st_sensor_reading_t reading;
+
+    st_capability_config_init(&config, ST_POD_ACTIVITY_ACCESS);
+    EXPECT(st_capability_config_set(&config, ST_POD_ACTIVITY_ACCESS,
+                                    ST_SENSOR_CONTACT,
+                                    ST_CONFIG_RULE_STATE_ACTIVE_VALUE,
+                                    1.0F, 1U, &applied) == ST_CONFIG_RESULT_OK);
+    EXPECT(st_capability_config_set(&config, ST_POD_ACTIVITY_ACCESS,
+                                    ST_SENSOR_CONTACT,
+                                    ST_CONFIG_RULE_EVENT_DEBOUNCE_MS,
+                                    50.0F, 1U, &applied) == ST_CONFIG_RESULT_OK);
+    st_alarm_persistent_state_init(&persistent);
+    EXPECT(st_alarm_runtime_init(&runtime, "POD_2", &config, &persistent,
+                                 1UL << ST_SENSOR_CONTACT, 1U, 1U,
+                                 NULL, NULL, 0U) == 0);
+    drain_alarm_events(&runtime);
+
+    /* Mid-debounce: a candidate transition is pending but has not yet
+     * crossed the 50ms window, so nothing is active yet. This models the
+     * exact unplug-glitch scenario this feature exists to guard against --
+     * a transient reading arriving during the port-removal debounce
+     * window, right before board_port_manager confirms the port empty. */
+    reading = contact_reading(1.0F, 1U, 10U);
+    EXPECT(st_alarm_runtime_ingest(&runtime, &reading, 10U) == 0);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) != 0);
+    EXPECT(runtime.candidate_valid[0] == 1U);
+
+    /* Detach fires before the debounce window elapses: nothing was active,
+     * so no clear event is emitted (0 conditions cleared) -- but the
+     * candidate state must not survive either, or a stray reading right
+     * after a future re-attach could resume counting from a stale
+     * mid-flight debounce instead of starting fresh. */
+    EXPECT(st_alarm_runtime_suspend_capability(&runtime, ST_SENSOR_CONTACT,
+                                               20U) == 0);
+    EXPECT(runtime.candidate_valid[0] == 0U);
+
+    /* Confirm it actually starts fresh: a single reading at what would
+     * have been past the old window's deadline does NOT fire on its own
+     * (proving the old candidate_since_ms was really discarded, not just
+     * left stale and coincidentally still valid). */
+    reading = contact_reading(1.0F, 2U, 65U);
+    EXPECT(st_alarm_runtime_ingest(&runtime, &reading, 65U) == 0);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) != 0);
+    return 0;
+}
+
+static int test_suspend_capability_leaves_other_capabilities_untouched(void)
+{
+    st_capability_config_t config;
+    st_capability_rule_t applied;
+    st_alarm_persistent_state_t persistent;
+    st_alarm_runtime_t runtime;
+    st_control_event_t event;
+    st_sensor_reading_t contact;
+    st_sensor_reading_t co2;
+    uint64_t co2_instance;
+
+    st_capability_config_init(&config, ST_POD_UNIVERSAL);
+    EXPECT(st_capability_config_set(&config, ST_POD_UNIVERSAL,
+                                    ST_SENSOR_CONTACT,
+                                    ST_CONFIG_RULE_STATE_ACTIVE_VALUE,
+                                    1.0F, 1U, &applied) == ST_CONFIG_RESULT_OK);
+    EXPECT(st_capability_config_set(&config, ST_POD_UNIVERSAL,
+                                    ST_SENSOR_CO2_PPM,
+                                    ST_CONFIG_RULE_NUMERIC_HIGH_THRESHOLD,
+                                    1000.0F, 1U, &applied) == ST_CONFIG_RESULT_OK);
+    st_alarm_persistent_state_init(&persistent);
+    EXPECT(st_alarm_runtime_init(&runtime, "POD_3C60", &config, &persistent,
+                                 (1UL << ST_SENSOR_CONTACT) | (1UL << ST_SENSOR_CO2_PPM),
+                                 1U, 1U, NULL, NULL, 0U) == 0);
+    drain_alarm_events(&runtime);
+
+    contact = contact_reading(1.0F, 1U, 10U);
+    EXPECT(st_alarm_runtime_ingest(&runtime, &contact, 10U) == 1);
+    drain_alarm_events(&runtime);
+    co2 = co2_reading(1200.0F, 1U, 10U);
+    EXPECT(st_alarm_runtime_ingest(&runtime, &co2, 10U) == 1);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
+    co2_instance = event.instance_id;
+
+    /* Pulling the reed only clears the CONTACT condition; the still-attached
+     * SCD41's CO2 alarm must not be touched by an unrelated port's
+     * detach -- this is the guarantee the "no two same-type modules on one
+     * pod" project decision (see decision log) relies on to make
+     * per-capability suspension unambiguous. */
+    EXPECT(st_alarm_runtime_suspend_capability(&runtime, ST_SENSOR_CONTACT,
+                                               20U) == 1);
+    EXPECT(st_alarm_runtime_next_event(&runtime, &event) == 0);
+    EXPECT(event.capability == ST_SENSOR_CONTACT);
+    EXPECT(st_alarm_runtime_condition_active(&runtime, co2_instance) == 1);
+    EXPECT(st_alarm_runtime_any_active(&runtime) == 1);
+    return 0;
+}
+
 int st_run_alarm_control_tests(void)
 {
     int failures = 0;
@@ -365,5 +533,8 @@ int st_run_alarm_control_tests(void)
     failures += test_condition_clear_retrigger_ack_and_silence();
     failures += test_state_alarm_debounce();
     failures += test_command_capabilities_persistent_ack_and_unsupported_output();
+    failures += test_suspend_capability_on_sensor_detach();
+    failures += test_suspend_capability_cancels_pending_debounce();
+    failures += test_suspend_capability_leaves_other_capabilities_untouched();
     return failures;
 }

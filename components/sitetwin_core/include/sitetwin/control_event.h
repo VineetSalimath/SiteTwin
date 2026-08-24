@@ -41,7 +41,13 @@ typedef enum {
     ST_CONTROL_REASON_STALE_DATA,
     ST_CONTROL_REASON_MULTI_SENSOR,
     ST_CONTROL_REASON_COORDINATOR_RESTART,
-    ST_CONTROL_REASON_CONFIGURATION_CHANGED
+    ST_CONTROL_REASON_CONFIGURATION_CHANGED,
+    /* Appended, not inserted -- keeps existing wire-encoded reason values
+     * stable. Distinguishes "this condition cleared because its sensor
+     * was physically detached" from a real ST_CONTROL_REASON_RULE_CLEARED
+     * (the underlying condition itself resolving), which bridge/TB can
+     * use to avoid presenting the two the same way. */
+    ST_CONTROL_REASON_SENSOR_DETACHED
 } st_control_reason_t;
 
 typedef struct {

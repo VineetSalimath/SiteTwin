@@ -114,6 +114,15 @@ typedef struct {
     st_sensor_registry_t *registry;
     size_t port_count;
     st_hotswap_port_slot_t slots[ST_HOTSWAP_BINDING_MAX_PORTS];
+    /* Populated by detach() (before it clears the corresponding slot)
+     * with whichever capabilities that port was reporting under. Drained
+     * by st_hotswap_module_binding_take_cleared_capabilities() -- the
+     * board_port_manager detach callback signature has no return value,
+     * so this is how the result reaches the caller. See that function's
+     * own comment for the intended calling pattern. */
+    st_sensor_kind_t cleared_capabilities[ST_HOTSWAP_BINDING_MAX_PORTS]
+                                          [ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT];
+    uint8_t cleared_capability_count[ST_HOTSWAP_BINDING_MAX_PORTS];
 } st_hotswap_module_binding_t;
 
 int st_hotswap_module_binding_init(st_hotswap_module_binding_t *binding,
@@ -130,6 +139,24 @@ bool st_hotswap_module_binding_uses_bus_probe(void *context, st_module_type_t mo
                                               uint8_t *expected_address);
 st_hal_result_t st_hotswap_module_binding_bus_probe(void *context, size_t port_index,
                                                      uint8_t expected_address);
+
+/*
+ * Drains whatever capabilities detach() found on port_index the last time
+ * it ran (empty/0 if nothing has been detached there since the last
+ * drain, or if port_index has never held a registry-backed/PIR/REED
+ * module). Intended to be called once per port, right after each
+ * st_board_port_manager_poll() call in the pod's main loop -- detach() is
+ * invoked synchronously from inside that poll, so anything it found is
+ * guaranteed ready by the time poll() returns. Each capability returned
+ * should be passed to st_alarm_runtime_suspend_capability() so a
+ * detached sensor's alarm rules don't linger active with no way left to
+ * clear themselves. Returns the number of capabilities written to out
+ * (0 up to ST_HOTSWAP_REGISTRY_SLOTS_PER_PORT), or 0 for an invalid
+ * binding/port_index/out.
+ */
+uint8_t st_hotswap_module_binding_take_cleared_capabilities(
+    st_hotswap_module_binding_t *binding, size_t port_index,
+    st_sensor_kind_t *out, uint8_t out_capacity);
 
 /*
  * For the pod's own poll loop. Returns 1 and fills the out-params if

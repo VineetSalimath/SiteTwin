@@ -38,5 +38,13 @@ int st_sensor_registry_attach(st_sensor_registry_t *registry, uint8_t port_index
 void st_sensor_registry_detach(st_sensor_registry_t *registry, uint8_t port_index, uint64_t now_ms);
 size_t st_sensor_registry_tick(st_sensor_registry_t *registry, uint64_t now_ms,
                                st_sensor_reading_t *readings, size_t reading_capacity);
+/* Read-only lookup of the sensor_kind an attached port is currently
+ * reporting under. Returns 0 and writes *out_kind on success; returns -1
+ * (out_kind left untouched) for an out-of-range port_index or a port that
+ * is not currently attached -- e.g. after st_sensor_registry_detach() has
+ * already run for it. */
+int st_sensor_registry_port_sensor_kind(const st_sensor_registry_t *registry,
+                                        uint8_t port_index,
+                                        st_sensor_kind_t *out_kind);
 
 #endif

@@ -67,6 +67,27 @@ void st_sensor_registry_detach(st_sensor_registry_t *registry, uint8_t port_inde
     port->last_transition_at_ms = now_ms;
 }
 
+int st_sensor_registry_port_sensor_kind(const st_sensor_registry_t *registry,
+                                        uint8_t port_index,
+                                        st_sensor_kind_t *out_kind)
+{
+    const st_sensor_port_t *port;
+
+    if (registry == NULL || port_index >= ST_MAX_SENSOR_PORTS || out_kind == NULL) {
+        return -1;
+    }
+    port = &registry->ports[port_index];
+    /* metadata.sensor_id is only ever populated once a real probe()
+     * succeeds (see probe_port() below) -- a non-empty sensor_id is a
+     * reliable "this port's metadata is real" check, independent of
+     * exactly which lifecycle state the port is currently in. */
+    if (port->attached == 0U || port->metadata.sensor_id[0] == '\0') {
+        return -1;
+    }
+    *out_kind = port->metadata.sensor_kind;
+    return 0;
+}
+
 static void probe_port(st_sensor_port_t *port, uint64_t now_ms)
 {
     st_module_metadata_t metadata;
