@@ -55,6 +55,6 @@ else()
     if(_sitetwin_final_pcb)
         message(STATUS "SiteTwin final_pcb pod id: ${SITETWIN_FINAL_PCB_POD_ID}")
         target_compile_definitions(${COMPONENT_LIB} PRIVATE
-            SITETWIN_FINAL_PCB_POD_ID="\"${SITETWIN_FINAL_PCB_POD_ID}\"")
+            "SITETWIN_FINAL_PCB_POD_ID=\"${SITETWIN_FINAL_PCB_POD_ID}\"")
     endif()
 endif()
