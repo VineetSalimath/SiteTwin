@@ -25,7 +25,14 @@ static const st_gateway_pod_identity_t pod_identity_table[] = {
      * under a new address -- see the POD_3C60 entry below for a concrete
      * case of exactly that happening. */
     {0x67C3U, "POD_67C3"},
-    {0x6647U, "POD_6647"},
+    /* POD_ABD1: formerly POD_6647 (Activity fixed profile). Migrated to
+     * final_pcb firmware; its retained Zigbee credentials turned out to
+     * be stale (a very old join from before this unit's long dormancy on
+     * a breadboard) and it never completed a real handshake -- appeared
+     * to hang indefinitely on discovery/steering. Zigbee credentials
+     * (zb_storage/zb_fct, 0x10b000/0x10f000) were force-erased and the
+     * unit re-commissioned from scratch under a new short address. */
+    {0xABD1U, "POD_ABD1"},
     /* POD_3C60: the final-PCB hot-swap dev unit re-commissioned under a new
      * short address after an accidental gateway-wifi firmware flash
      * overwrote its zb_storage/zb_fct NVS partitions (that image's factory

@@ -29,10 +29,10 @@ static int test_numbered_identity_and_reverse_route(void)
     EXPECT(st_gateway_identity_short_address(pod_id, &address) == 0);
     EXPECT(address == 0x67C3U);
 
-    EXPECT(st_gateway_identity_resolve(0x6647U, 1U, ST_SENSOR_MOTION,
+    EXPECT(st_gateway_identity_resolve(0xABD1U, 1U, ST_SENSOR_MOTION,
                                        pod_id, sizeof(pod_id), sensor_id,
                                        sizeof(sensor_id)) == 0);
-    EXPECT(strcmp(pod_id, "POD_6647") == 0);
+    EXPECT(strcmp(pod_id, "POD_ABD1") == 0);
     EXPECT(strcmp(sensor_id, "pir_motion") == 0);
 
     EXPECT(st_gateway_identity_resolve(0x3C60U, 3U,
